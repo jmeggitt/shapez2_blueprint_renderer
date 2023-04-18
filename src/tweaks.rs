@@ -171,29 +171,51 @@ impl ModelLoader {
 
 fn internal_name_mapping_adjustments(internal_name: &str) -> &str {
     match internal_name {
-        "RotatorOneQuadInternalVariant" => "Rotator1Quad",
+        //belts
         "BeltDefaultForwardInternalVariant" => "Belt_Straight",
-        "BeltDefaultRightInternalVariant" => "Belt_90_L",
-        "BeltDefaultLeftInternalVariant" => "Belt_90_R",
-        "CutterDefaultInternalVariant" => "CutterStatic_Fixed",
+        "BeltDefaultRightInternalVariant" => "Belt_90_R",
+        "BeltDefaultLeftInternalVariant" => "Belt_90_L",
+        //vertical
         "Lift1UpBackwardInternalVariant" => "Lift1UpBackwards",
-        "RotatorOneQuadCCWInternalVariant" => "Rotator1QuadPlatform90CC",
-
-        "PainterDefaultInternalVariant" => "PainterBasin", // Also PainterRoll, but it is less important
+        //belts special
         "SplitterTShapeInternalVariant" => "Splitter2to1T",
-        "PipeJunctionInternalVariant" => "PipeJunctionGlas",
-        "PipeDownForwardInternalVariant" => "Pipe1DownGlas", // ?
-        "PipeDownBackwardInternalVariant" => "Pipe1DownBackwardGlas",
-
-        // Are the reduced versions the only ones?
+        "MergerTShapeInternalVariant" => "Merger2to1T",
         "BeltPortSenderInternalVariant" => "BeltPortSender",
         "BeltPortReceiverInternalVariant" => "BeltPortReceiver",
 
+        //rotating
+        "RotatorOneQuadInternalVariant" => "Rotator1QuadPlatform90CC", // arrows onlu
+        "RotatorOneQuadCCWInternalVariant" => "Rotator1QuadPlatform90CW", // ^
+        "RotatorHalfInternalVariant" => "Rotator1QuadPlatform180", // ^^
+
+        //processing
+        "CutterDefaultInternalVariant" => "CutterStatic_Fixed",
         "StackerDefaultInternalVariant" => "StackerSolid",
-        "MergerTShapeInternalVariant" => "Merger2to1T",
-        "SandboxFluidProducerDefaultInternalVariant" => "SandboxIFluidProducer",
+        "PainterDefaultInternalVariant" => "PainterBasin",
+        "MixerDefaultInternalVariant" => "MixerFoundation",
+        "CutterHalfInternalVariant" => "HalfCutter",
+
+        //pipes normal
         "PipeLeftInternalVariant" => "PipeLeftGlas",
+        "PipeRightInternalVariant" => "PipeRightGlas",
+        "PipeCrossInternalVariant" => "PipeCrossJunctionGlas",
+        "PipeJunctionInternalVariant" => "PipeJunctionGlas",
+        //pipes up
+        "PipeUpForwardInternalVariant" => "Pipe1UpForwardGlas",
         "PipeUpBackwardInternalVariant" => "Pipe1UpBackwardGlas",
+        "PipeUpLeftInternalVariant" => "Pipe1UpLeftBlueprint", // Contains the pump
+        "PipeUpRightInternalVariant" => "Pipe1UpRightBlueprint", // ^
+        //pipes down
+        "PipeDownForwardInternalVariant" => "Pipe1DownGlas", 
+        "PipeDownBackwardInternalVariant" => "Pipe1DownBackwardGlas",
+        "PipeDownRightInternalVariant" => "Pipe1DownRightGlas",
+        "PipeDownLeftInternalVariant" => "Pipe1DownLeftGlas",
+
+        // Support Buildings
+        "LabelDefaultInternalVariant" => "LabelSupport",
+        "FluidStorageDefaultInternalVariant" => "PaintTankFoundation",
+        "StorageDefaultInternalVariant" => "StorageSolid",
+        "SandboxFluidProducerDefaultInternalVariant" => "SandboxIFluidProducer",
         x => x,
     }
 }

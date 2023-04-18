@@ -26,8 +26,8 @@ pub fn perform_render(
     model_loader: &mut ModelLoader,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Render in 4k then scale it down by 4x to get better resolution
-    let width = 3840;
-    let height = 2160;
+    let width = 1980;
+    let height = 1080;
 
     // TODO: It should be possible to replace this with a simple framebuffer
     let event_loop = glutin::event_loop::EventLoop::new();
@@ -53,6 +53,7 @@ pub fn perform_render(
             write: true,
             ..Default::default()
         },
+        viewport: Some(glium::Rect { bottom: 0, left: 0, width, height }),
         ..Default::default()
     };
 
@@ -73,6 +74,7 @@ pub fn perform_render(
         };
 
         let pos = translation(&Vec3::new(entry.x as f32, entry.l as f32, entry.y as f32));
+        let pos = nalgebra_glm::scale(&pos, &Vec3::new(1.0, 1.0, -1.0));
         let building = rotate_y(&pos, entry.r as f32 * f32::PI() / 2.0);
 
         let uniforms = uniform! {
@@ -111,7 +113,7 @@ pub fn perform_render(
     let image =
         image::ImageBuffer::from_raw(image.width, image.height, image.data.into_owned()).unwrap();
     let image = image::DynamicImage::ImageRgba8(image).flipv();
-    let image = image.resize(image.width() / 4, image.height() / 4, FilterType::Triangle);
+    let image = image.resize(image.width(), image.height(), FilterType::Triangle);
     image.save("blueprint_render.png").unwrap();
 
     Ok(())
