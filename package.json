@@ -1,0 +1,20 @@
+{
+  "name": "shapez2_blueprint_renderer",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "blueprint_render.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "author": "Jasper Meggitt <jasper.meggitt@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "cdt2d": "^1.0.0",
+    "gl": "^6.0.2",
+    "node-gzip": "^1.1.2",
+    "pngjs": "^7.0.0",
+    "sanitize-filename": "^1.6.3",
+    "three": "^0.151.3"
+  }
+}
