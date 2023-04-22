@@ -3,7 +3,7 @@ use obj::Obj;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
@@ -266,6 +266,19 @@ fn internal_name_mapping_adjustments(internal_name: &str) -> Vec<Mapping> {
         "CutterHalfInternalVariant" => vec![Mapping {
             file: "HalfCutter".to_string(),
             offset: Vec3::new(0.0, 0.0, 0.0)
+        }],
+        "PinPusherDefaultInternalVariant" => vec![Mapping {
+            file: "PinPusher".to_string(),
+            offset: Vec3::new(0.0, 0.0, 0.0)
+        }, Mapping {
+            file: "PinPusherRotator1".to_string(),
+            offset: Vec3::new(0.0, 0.0, 0.0)
+        }, Mapping {
+            file: "PinPusherClampR".to_string(),
+            offset: Vec3::new(0.0, 0.16, 0.0)
+        }, Mapping {
+            file: "PinPusherClampL".to_string(),
+            offset: Vec3::new(0.0, 0.15, 0.0)
         }],
 
         //pipes normal
