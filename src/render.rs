@@ -8,7 +8,7 @@ use glium::index::PrimitiveType::TrianglesList;
 use glium::Program;
 use glium::{implement_vertex, uniform, Surface, VertexBuffer};
 use image::imageops::FilterType;
-use nalgebra_glm::{look_at, perspective, rotate_y, translation, Vec3};
+use nalgebra_glm::{look_at, perspective, rotate_y, translation, Vec3, translate};
 use num_traits::float::FloatConst;
 use obj::{IndexTuple, ObjData, SimplePolygon};
 
@@ -68,41 +68,50 @@ pub fn perform_render(
     );
 
     for entry in entries {
-        let model = match model_loader.load_model(&entry.internal_name) {
-            Model::Missing => continue,
-            Model::Resolved { model } => model,
-        };
+        let models = model_loader.load_model(&entry.internal_name);
+        for model_entry in models {
+            let model = match model_entry {
+                Model::Missing => continue,
+                Model::Resolved { model, offset: _ } => model,
+            };
+            let offset = match model_entry {
+                Model::Missing => continue,
+                Model::Resolved { model: _, offset} => offset,
+            };
+            
+            let mut pos = translation(&Vec3::new(entry.x as f32, entry.l as f32, entry.y as f32));
+            pos = translate(&pos, offset);
+            pos = nalgebra_glm::scale(&pos, &Vec3::new(1.0, 1.0, -1.0));
 
-        let pos = translation(&Vec3::new(entry.x as f32, entry.l as f32, entry.y as f32));
-        let pos = nalgebra_glm::scale(&pos, &Vec3::new(1.0, 1.0, -1.0));
-        let building = rotate_y(&pos, entry.r as f32 * f32::PI() / 2.0);
+            let building = rotate_y(&pos, entry.r as f32 * f32::PI() / 2.0);
 
-        let uniforms = uniform! {
-            model: building.data.0,
-            view: view.data.0,
-            projection: projection.data.0,
-        };
+            let uniforms = uniform! {
+                model: building.data.0,
+                view: view.data.0,
+                projection: projection.data.0,
+            };
 
-        for group in model.data.objects.iter().flat_map(|x| x.groups.iter()) {
-            vertex_list.clear();
+            for group in model.data.objects.iter().flat_map(|x| x.groups.iter()) {
+                vertex_list.clear();
 
-            for SimplePolygon(polygon) in &group.polys {
-                let initial = build_vertex(&model.data, polygon[0]);
-                let mut prev = build_vertex(&model.data, polygon[1]);
+                for SimplePolygon(polygon) in &group.polys {
+                    let initial = build_vertex(&model.data, polygon[0]);
+                    let mut prev = build_vertex(&model.data, polygon[1]);
 
-                for index in &polygon[2..] {
-                    let next = build_vertex(&model.data, *index);
+                    for index in &polygon[2..] {
+                        let next = build_vertex(&model.data, *index);
 
-                    vertex_list.push(initial);
-                    vertex_list.push(prev);
-                    vertex_list.push(next);
-                    prev = next;
+                        vertex_list.push(initial);
+                        vertex_list.push(prev);
+                        vertex_list.push(next);
+                        prev = next;
+                    }
                 }
+
+                let vbo = VertexBuffer::new(&display, &vertex_list)?;
+
+                target.draw(&vbo, NoIndices(TrianglesList), &program, &uniforms, &params)?;
             }
-
-            let vbo = VertexBuffer::new(&display, &vertex_list)?;
-
-            target.draw(&vbo, NoIndices(TrianglesList), &program, &uniforms, &params)?;
         }
     }
 
