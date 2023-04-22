@@ -79,6 +79,29 @@ function* possibleModelNames(baseName) {
     }
 }
 
+function findFileCaseInsensitive(dirPath, fileName) {
+    // Check unchanged file name first to see if we can avoid checking the entire directory
+    const unchangedPath = path.join(dirPath, fileName);
+    if (fs.existsSync(unchangedPath)) {
+        return unchangedPath;
+    }
+
+    return new Promise((resolve, reject) => {
+        fs.readdir(dirPath, {encoding: "utf8"}, (err, files) => {
+            if (err) return reject(err);
+
+            for (const searchFile of files) {
+                if (fileName.localeCompare(searchFile, undefined, {sensitivity: "accent"})) {
+                    resolve(path.join(dirPath, searchFile));
+                }
+            }
+
+            // If we are unable to find the file, just return the empty path so the regular error messages still work
+            resolve(unchangedPath);
+        });
+    })
+}
+
 export class ModelLoader {
 
     constructor(modelDir) {
@@ -88,11 +111,11 @@ export class ModelLoader {
         this.inProgress = {};
     }
 
-    #attemptLoadFile(name) {
-        const filePath = path.join(this.modelDir, `${sanitize(name)}.obj`);
+    async #attemptLoadFile(name) {
+        const filePath = await findFileCaseInsensitive(this.modelDir, `${sanitize(name)}.obj`);
 
         if (this.inProgress.hasOwnProperty(filePath)) {
-            return this.inProgress[filePath];
+            return await this.inProgress[filePath];
         }
 
         const objLoader = this.loader;
@@ -108,7 +131,7 @@ export class ModelLoader {
         });
 
         this.inProgress[filePath] = loadPromise;
-        return loadPromise;
+        return await loadPromise;
     }
 
     async load(baseName) {
