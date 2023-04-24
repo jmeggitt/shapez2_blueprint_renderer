@@ -1,4 +1,10 @@
 //! This module had generated bindings to OpenGL
+#![allow(
+    clippy::unused_unit,
+    clippy::upper_case_acronyms,
+    clippy::too_many_arguments,
+    clippy::manual_non_exhaustive
+)]
 
 // Basically equivalent to C's #include.
 include!(concat!(env!("OUT_DIR"), "/gl_bindings.rs"));
@@ -17,12 +23,3 @@ macro_rules! c_str {
         CSTR
     }};
 }
-
-// Helper macro for getting the offset of a field within a struct
-#[macro_export]
-macro_rules! offset_of {
-    ($ty:ty, $field:ident) => {
-        unsafe { &(*(0 as *const $ty)).$field as *const _ as usize }
-    }
-}
-

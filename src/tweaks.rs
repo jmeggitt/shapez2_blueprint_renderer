@@ -110,7 +110,6 @@ impl ModelLoader {
             return Some(Model::Missing);
         }
 
-        println!("Loaded model for {}", path.as_ref().display());
         Some(Model::Resolved { model: obj })
     }
 
@@ -186,7 +185,7 @@ fn internal_name_mapping_adjustments(internal_name: &str) -> &str {
         //rotating
         "RotatorOneQuadInternalVariant" => "Rotator1QuadPlatform90CC", // arrows onlu
         "RotatorOneQuadCCWInternalVariant" => "Rotator1QuadPlatform90CW", // ^
-        "RotatorHalfInternalVariant" => "Rotator1QuadPlatform180", // ^^
+        "RotatorHalfInternalVariant" => "Rotator1QuadPlatform180",     // ^^
 
         //processing
         "CutterDefaultInternalVariant" => "CutterStatic_Fixed",
@@ -200,13 +199,15 @@ fn internal_name_mapping_adjustments(internal_name: &str) -> &str {
         "PipeRightInternalVariant" => "PipeRightGlas",
         "PipeCrossInternalVariant" => "PipeCrossJunctionGlas",
         "PipeJunctionInternalVariant" => "PipeJunctionGlas",
+
         //pipes up
         "PipeUpForwardInternalVariant" => "Pipe1UpForwardGlas",
         "PipeUpBackwardInternalVariant" => "Pipe1UpBackwardGlas",
         "PipeUpLeftInternalVariant" => "Pipe1UpLeftBlueprint", // Contains the pump
         "PipeUpRightInternalVariant" => "Pipe1UpRightBlueprint", // ^
+
         //pipes down
-        "PipeDownForwardInternalVariant" => "Pipe1DownGlas", 
+        "PipeDownForwardInternalVariant" => "Pipe1DownGlas",
         "PipeDownBackwardInternalVariant" => "Pipe1DownBackwardGlas",
         "PipeDownRightInternalVariant" => "Pipe1DownRightGlas",
         "PipeDownLeftInternalVariant" => "Pipe1DownLeftGlas",

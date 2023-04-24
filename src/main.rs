@@ -60,7 +60,6 @@ fn main() {
     let (resolved, total) = loader.load_counts();
     println!("Resolved a total of {}/{} models", resolved, total);
 
-
     // render::setup_opengl(1980, 1080);
     // let (_, gl) = render::setup_opengl(1000, 1000);
 }

@@ -1,2 +1,10 @@
 /target
 Cargo.lock
+
+# Test outputs
+*.png
+
+# Models and test files
+OBJ
+models
+blueprint
