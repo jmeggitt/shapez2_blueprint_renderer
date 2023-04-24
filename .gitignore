@@ -4,7 +4,8 @@ Cargo.lock
 # Test outputs
 *.png
 
-# Models and test files
+# Models and test input files
 OBJ
 models
 blueprint
+bp.txt
