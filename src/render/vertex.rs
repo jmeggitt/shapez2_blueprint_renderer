@@ -1,6 +1,7 @@
 use crate::render::gl::types::GLsizei;
 use crate::render::{gl, Gl};
 use memoffset::offset_of;
+use nalgebra_glm::Vec3;
 use obj::{Group, IndexTuple, Obj, ObjData, SimplePolygon};
 use std::mem::size_of;
 
@@ -12,6 +13,13 @@ pub struct Vertex {
 }
 
 impl Vertex {
+    pub fn new(position: Vec3, normal: Vec3) -> Self {
+        Vertex {
+            position: position.data.0[0],
+            normal: normal.data.0[0],
+        }
+    }
+
     pub unsafe fn configure_vao(gl: &Gl) {
         gl.VertexAttribPointer(
             0,
@@ -76,15 +84,11 @@ pub fn vertex_buffer_for_group(vertex_list: &mut Vec<Vertex>, model: &Obj, group
     }
 }
 
-pub fn vertex_buffer_for_model(model: &Obj) -> Vec<Vertex> {
-    let mut vertex_list = Vec::new();
-
+pub fn vertex_buffer_for_model(vertex_list: &mut Vec<Vertex>, model: &Obj) {
     model
         .data
         .objects
         .iter()
         .flat_map(|object| object.groups.iter())
-        .for_each(|group| vertex_buffer_for_group(&mut vertex_list, model, group));
-
-    vertex_list
+        .for_each(|group| vertex_buffer_for_group(vertex_list, model, group));
 }

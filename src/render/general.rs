@@ -30,6 +30,7 @@ pub struct GeneralProgramUniforms {
     projection: GLint,
     camera: GLint,
     light_direction: GLint,
+    material_color: GLint,
 }
 
 impl GeneralProgramUniforms {
@@ -40,6 +41,7 @@ impl GeneralProgramUniforms {
             projection: gl.GetUniformLocation(program, c_str!("projection").as_ptr()),
             camera: gl.GetUniformLocation(program, c_str!("camera").as_ptr()),
             light_direction: gl.GetUniformLocation(program, c_str!("lightDirection").as_ptr()),
+            material_color: gl.GetUniformLocation(program, c_str!("materialColor").as_ptr()),
         };
 
         check_for_errors(gl);
@@ -69,5 +71,9 @@ impl GeneralProgramUniforms {
 
     pub unsafe fn set_light_direction(&self, gl: &Gl, x: &Vec3) {
         gl.Uniform3fv(self.light_direction, 1, x.as_ptr() as *const _);
+    }
+
+    pub unsafe fn set_material_color(&self, gl: &Gl, x: &Vec3) {
+        gl.Uniform3fv(self.material_color, 1, x.as_ptr() as *const _);
     }
 }

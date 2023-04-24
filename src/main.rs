@@ -10,12 +10,8 @@ use std::io::{self, stdin, BufReader, Error, Read};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
-// mod render_old;
-mod tweaks;
-// mod render;
-// mod render_old;
 mod render;
-// mod render;
+mod tweaks;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -52,16 +48,8 @@ fn main() {
         exit(1);
     }
 
-    // if let Err(err) = render_old::perform_render(&blueprint.bp.entries, &mut loader) {
-    //     println!("Encountered rendering error: {}", err);
-    //     exit(1);
-    // }
-
     let (resolved, total) = loader.load_counts();
     println!("Resolved a total of {}/{} models", resolved, total);
-
-    // render::setup_opengl(1980, 1080);
-    // let (_, gl) = render::setup_opengl(1000, 1000);
 }
 
 fn read_from_file<P: AsRef<Path>>(path: P) -> BlueprintData {

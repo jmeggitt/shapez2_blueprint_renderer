@@ -6,16 +6,16 @@ mod vertex;
 
 use crate::render::general::GeneralProgram;
 use crate::render::gl::types::{GLsizei, GLsizeiptr, GLuint};
-use crate::render::vertex::Vertex;
+use crate::render::vertex::{vertex_buffer_for_model, Vertex};
 use crate::tweaks::{Model, ModelLoader};
 use crate::BlueprintEntry;
 pub use context::setup_opengl;
 pub use gl::Gl;
-use glutin::config::GlConfig;
 use image::imageops::{flip_vertical_in_place, resize, FilterType};
 use image::RgbImage;
-use nalgebra_glm::{look_at, perspective, rotate_y, translation, Vec3};
+use nalgebra_glm::{look_at, perspective, rotate_y, scale, translation, Mat4, Vec3, Vec4};
 use num_traits::FloatConst;
+use std::collections::HashMap;
 use std::mem::size_of;
 
 const FORCED_SAMPLE_MULTIPLIER: u32 = 2;
@@ -24,121 +24,333 @@ pub fn perform_render(
     entries: &[BlueprintEntry],
     model_loader: &mut ModelLoader,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Render in 4k then scale it down by 4x to get better resolution
-    let width = 1980 * FORCED_SAMPLE_MULTIPLIER;
-    let height = 1080 * FORCED_SAMPLE_MULTIPLIER;
+    let width = 1980;
+    let height = 1080;
 
-    println!("Creating graphics context");
-    let (_, graphics) = context::setup_opengl(width, height);
-    check_for_errors(&graphics.gl);
-    println!("Created graphics context");
+    let img = unsafe {
+        perform_render_impl(
+            entries,
+            model_loader,
+            width * FORCED_SAMPLE_MULTIPLIER,
+            height * FORCED_SAMPLE_MULTIPLIER,
+        )
+    };
 
     println!(
-        "Color buffer type: {:?}",
-        graphics.gl_config.color_buffer_type()
+        "Shrinking image by a factor of {}",
+        FORCED_SAMPLE_MULTIPLIER
     );
-    // println!("Color buffer type: {:?}", graphics.gl_surface.);
+    let out = resize(&img, width, height, FilterType::Triangle);
+
+    println!("Saving image to disk");
+    out.save("out_glutin.png").unwrap();
+
+    println!("Wrote image!");
+    Ok(())
+}
+
+unsafe fn perform_render_impl(
+    entries: &[BlueprintEntry],
+    model_loader: &mut ModelLoader,
+    width: u32,
+    height: u32,
+) -> RgbImage {
+    println!("Creating graphics context");
+    let (_, graphics) = setup_opengl(width, height);
+
+    // Check that we actually have a buffer setup correctly
+    if graphics.CheckFramebufferStatus(gl::FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
+        panic!("Failed to setup framebuffer!");
+    }
 
     // let mut fbo = 0;
     // let mut rbo = 0;
     // let mut texture = 0;
-    unsafe {
-        // graphics.gl.GenFramebuffers(1, &mut fbo as *mut _);
-        // graphics.gl.BindFramebuffer(gl::FRAMEBUFFER, fbo);
-        // let mut framebuffer = 0;
-        // let mut renderbuffer = 0;
-        // graphics.gl.GenFramebuffers(1, &mut fbo);
-        // graphics.gl.GenRenderbuffers(1, &mut rbo);
-        println!("Created FBO and RBO");
-        //
-        // if graphics.gl.CheckFramebufferStatus(fbo) != gl::FRAMEBUFFER_COMPLETE {
-        //     panic!("Failed to setup framebuffer!");
-        // }
-        //
-        // graphics.gl.BindFramebuffer(gl::FRAMEBUFFER, fbo);
-        // graphics.gl.BindRenderbuffer(gl::RENDERBUFFER, rbo);
-        // graphics.gl.RenderbufferStorage(gl::RENDERBUFFER, gl::RGBA, width as GLsizei, height as GLsizei);
-        // graphics.gl.FramebufferRenderbuffer(
-        //     gl::FRAMEBUFFER,
-        //     gl::COLOR_ATTACHMENT0,
-        //     gl::RENDERBUFFER,
-        //     rbo,
-        // );
-        check_for_errors(&graphics.gl);
+    // graphics.GenFramebuffers(1, &mut fbo as *mut _);
+    // graphics.BindFramebuffer(gl::FRAMEBUFFER, fbo);
+    // let mut framebuffer = 0;
+    // let mut renderbuffer = 0;
+    // graphics.GenFramebuffers(1, &mut fbo);
+    // graphics.GenRenderbuffers(1, &mut rbo);
+    println!("Created FBO and RBO");
+    //
+    // if graphics.CheckFramebufferStatus(fbo) != gl::FRAMEBUFFER_COMPLETE {
+    //     panic!("Failed to setup framebuffer!");
+    // }
+    //
+    // graphics.BindFramebuffer(gl::FRAMEBUFFER, fbo);
+    // graphics.BindRenderbuffer(gl::RENDERBUFFER, rbo);
+    // graphics.RenderbufferStorage(gl::RENDERBUFFER, gl::RGBA, width as GLsizei, height as GLsizei);
+    // graphics.FramebufferRenderbuffer(
+    //     gl::FRAMEBUFFER,
+    //     gl::COLOR_ATTACHMENT0,
+    //     gl::RENDERBUFFER,
+    //     rbo,
+    // );
+    // check_for_errors(&graphics);
 
-        // graphics.gl.GenTextures(1, &mut texture);
-        // graphics.gl.BindTexture(gl::TEXTURE_2D, texture);
-        //
-        // graphics.gl.TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as GLint, width as GLsizei, height as GLsizei, 0, gl::RGB, gl::UNSIGNED_BYTE, 0 as *const c_void);
-        //
-        // graphics.gl.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as GLint);
-        // graphics.gl.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as GLint);
-        //
-        // graphics.gl.FramebufferTexture(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, texture, 0);
-        //
-        // let mut draw_buffers = gl::COLOR_ATTACHMENT0;
-        // graphics.gl.DrawBuffers(1, &mut draw_buffers);
+    // graphics.GenTextures(1, &mut texture);
+    // graphics.BindTexture(gl::TEXTURE_2D, texture);
+    //
+    // graphics.TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as GLint, width as GLsizei, height as GLsizei, 0, gl::RGB, gl::UNSIGNED_BYTE, 0 as *const c_void);
+    //
+    // graphics.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as GLint);
+    // graphics.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as GLint);
+    //
+    // graphics.FramebufferTexture(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, texture, 0);
+    //
+    // let mut draw_buffers = gl::COLOR_ATTACHMENT0;
+    // graphics.DrawBuffers(1, &mut draw_buffers);
 
-        if graphics.gl.CheckFramebufferStatus(gl::FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
-            panic!("Failed to setup framebuffer!");
-        }
+    // graphics.BindFramebuffer(gl::FRAMEBUFFER, fbo);
+    graphics
+        .gl
+        .Viewport(0, 0, width as GLsizei, height as GLsizei);
+    check_for_errors(&graphics);
 
-        // graphics.gl.BindFramebuffer(gl::FRAMEBUFFER, fbo);
-        graphics
-            .gl
-            .Viewport(0, 0, width as GLsizei, height as GLsizei);
-        check_for_errors(&graphics.gl);
+    println!("Assigned size to FBO");
 
-        println!("Assigned size to FBO");
-    }
-
-    let program = unsafe { GeneralProgram::build(&graphics.gl).unwrap() };
+    let program = unsafe { GeneralProgram::build(&graphics).unwrap() };
     println!("Built shader program");
 
-    println!("Got shader uniforms");
+    // graphics.Enable(gl::FRAMEBUFFE)
+    graphics.ClearColor(0.1, 0.1, 0.1, 1.0);
+    graphics
+        .gl
+        .Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+
+    graphics.Enable(gl::DEPTH_TEST);
+    graphics.DepthFunc(gl::LESS);
+
+    graphics.UseProgram(program.program);
 
     let mut vao = 0;
+    graphics.GenVertexArrays(1, &mut vao);
+    graphics.BindVertexArray(vao);
 
-    unsafe {
-        check_for_errors(&graphics.gl);
-        // graphics.gl.Enable(gl::DEPTH_TEST);
-        graphics.gl.UseProgram(program.program);
-        check_for_errors(&graphics.gl);
-        // graphics.gl.BindVertexArray(program.vao);
-        // check_for_errors(&graphics.gl);
+    let (mut models, mut aabb) = send_models_to_gpu(&graphics, entries, model_loader);
 
-        graphics.gl.GenVertexArrays(1, &mut vao);
-        check_for_errors(&graphics.gl);
+    let aspect_ratio = width as f32 / height as f32;
+    let fovy = 0.6;
 
-        graphics.gl.BindVertexArray(vao);
-        check_for_errors(&graphics.gl);
+    println!("AABB: {:?}", aabb);
 
-        graphics.gl.Enable(gl::DEPTH_TEST);
-        check_for_errors(&graphics.gl);
+    // projection
+    let view_vector = Vec3::new(0.0, -1.0, 1.0).normalize();
 
-        graphics.gl.ClearColor(0.1, 0.1, 0.1, 1.0);
-        check_for_errors(&graphics.gl);
-        graphics
-            .gl
-            .Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-        check_for_errors(&graphics.gl);
+    // Clip AABB to above ground level
+    aabb.min.y = f32::max(aabb.min.y, 0.0);
+    aabb.max.y = f32::max(aabb.max.y, 0.0);
 
-        graphics.gl.DepthFunc(gl::LESS);
-        check_for_errors(&graphics.gl);
-    }
-    println!("Enabled program and cleared buffer");
+    let camera_space_aabb = aabb.apply_transform(&look_at(
+        &Vec3::new(0.0, 0.0, 0.0),
+        &view_vector,
+        &Vec3::new(0.0, 1.0, 0.0),
+    ));
 
-    let projection = perspective(width as f32 / height as f32, 1.2, 0.1, 100.0);
-    let camera_pos = Vec3::new(-10.0, 10.0, -10.0);
-    let light_direction = Vec3::new(0.0, -2.0, 1.0).normalize();
+    let x_extent = f32::max(camera_space_aabb.min.x.abs(), camera_space_aabb.max.x);
+    let y_extent = f32::max(camera_space_aabb.min.y.abs(), camera_space_aabb.max.y);
 
+    let fovx = aspect_ratio * fovy;
+    let min_x_t = x_extent / (fovx / 2.0).tan();
+    let min_y_t = y_extent / (fovy / 2.0).tan();
+    let t = 1.05 * f32::max(min_x_t, min_y_t);
+
+    let extension = fovy.tan() / fovy.sin();
+    println!("{}", extension);
+
+    let projection = perspective(
+        aspect_ratio,
+        fovy,
+        0.1,
+        extension * (t + camera_space_aabb.max.z),
+    );
+    let camera_pos = -t * view_vector;
     let view = look_at(
-        &camera_pos,
+        &(-t * view_vector),
         &Vec3::new(0.0, 0.0, 0.0),
         &Vec3::new(0.0, 1.0, 0.0),
     );
 
-    let mut vertex_list = Vec::new();
+    let light_direction = Vec3::new(1.0, -2.0, 1.0).normalize();
+
+    program.uniforms.set_view(&graphics, &view);
+    program.uniforms.set_projection(&graphics, &projection);
+    program.uniforms.set_camera(&graphics, &camera_pos);
+    program
+        .uniforms
+        .set_light_direction(&graphics, &light_direction);
+
+    models.push(ModelGraphics::calculate_ground_plane(
+        &graphics,
+        projection * view,
+    ));
+
+    for model in &models {
+        graphics.BindBuffer(gl::ARRAY_BUFFER, model.vbo);
+        graphics.BindVertexArray(vao);
+        Vertex::configure_vao(&graphics);
+
+        program.uniforms.set_model(&graphics, &model.model_uniform);
+        program
+            .uniforms
+            .set_material_color(&graphics, &model.color_uniform);
+
+        graphics.DrawArrays(gl::TRIANGLES, 0, model.vertex_count);
+    }
+
+    let mut buffer = vec![0u8; (width * height * 3) as usize];
+
+    println!("Wait for rendering to finish and extract pixels from framebuffer");
+    graphics.Finish();
+    graphics.ReadPixels(
+        0,
+        0,
+        width as GLsizei,
+        height as GLsizei,
+        gl::RGB,
+        gl::UNSIGNED_BYTE,
+        buffer.as_mut_ptr() as *mut _,
+    );
+
+    check_for_errors(&graphics);
+    match RgbImage::from_raw(width, height, buffer) {
+        Some(mut img) => {
+            flip_vertical_in_place(&mut img);
+            img
+        }
+        None => unreachable!("Buffer was created with the correct size"),
+    }
+}
+
+struct ModelGraphics {
+    vbo: GLuint,
+    vertex_count: GLsizei,
+    model_uniform: Mat4,
+    color_uniform: Vec3,
+}
+
+impl ModelGraphics {
+    fn ground_plane_vertex(inverse_camera: &Mat4, viewport_x: f32, viewport_y: f32) -> Vertex {
+        let frustum_near_corner = inverse_camera * Vec4::new(viewport_x, viewport_y, 0.0, 1.0);
+        let frustum_far_corner = inverse_camera * Vec4::new(viewport_x, viewport_y, 1.0, 1.0);
+
+        let frustum_near_corner = frustum_near_corner.xyz() / frustum_near_corner.w;
+        let frustum_far_corner = frustum_far_corner.xyz() / frustum_far_corner.w;
+
+        let offset = frustum_near_corner;
+        let direction = (frustum_far_corner - frustum_near_corner).normalize();
+
+        let ground_normal = Vec3::new(0.0, 1.0, 0.0);
+
+        let denominator = ground_normal.dot(&direction);
+        if denominator.abs() < f32::EPSILON {
+            return Vertex::new(Vec3::default(), ground_normal);
+        }
+
+        let t = (-offset).dot(&ground_normal) / denominator;
+        Vertex::new(offset + direction * t, ground_normal)
+    }
+
+    unsafe fn calculate_ground_plane(gl: &Gl, camera: Mat4) -> ModelGraphics {
+        let buffer = match camera.try_inverse() {
+            Some(inverse) => {
+                let a = Self::ground_plane_vertex(&inverse, 1.0, 1.0);
+                let b = Self::ground_plane_vertex(&inverse, -1.0, 1.0);
+                let c = Self::ground_plane_vertex(&inverse, 1.0, -1.0);
+                let d = Self::ground_plane_vertex(&inverse, -1.0, -1.0);
+
+                [a, b, c, b, c, d]
+            }
+            None => {
+                println!("Unable to invert camera matrix");
+                let size = 1000.0;
+                let ground_normal = Vec3::new(0.0, 1.0, 0.0);
+
+                let a = Vertex::new(Vec3::new(size, 0.0, size), ground_normal);
+                let b = Vertex::new(Vec3::new(-size, 0.0, size), ground_normal);
+                let c = Vertex::new(Vec3::new(size, 0.0, -size), ground_normal);
+                let d = Vertex::new(Vec3::new(-size, 0.0, -size), ground_normal);
+
+                [a, b, c, b, c, d]
+            }
+        };
+
+        ModelGraphics {
+            vbo: load_vbo(gl, &buffer),
+            vertex_count: 6,
+            model_uniform: Mat4::identity(),
+            color_uniform: Vec3::new(0.18039, 0.74902, 0.64706),
+        }
+    }
+}
+
+/// Axis Aligned Bounding Box
+#[derive(Copy, Clone, Debug, Default)]
+struct AABB {
+    min: Vec3,
+    max: Vec3,
+}
+
+impl AABB {
+    pub fn expand_to_hold(&mut self, vertex: Vec3) {
+        self.min.x = self.min.x.min(vertex.x);
+        self.min.y = self.min.y.min(vertex.y);
+        self.min.z = self.min.z.min(vertex.z);
+
+        self.max.x = self.max.x.max(vertex.x);
+        self.max.y = self.max.y.max(vertex.y);
+        self.max.z = self.max.z.max(vertex.z);
+    }
+
+    pub fn expand_to_hold_aabb(&mut self, other: AABB) {
+        self.expand_to_hold(other.min);
+        self.expand_to_hold(other.max);
+    }
+
+    pub fn corners(&self) -> [Vec3; 8] {
+        [
+            Vec3::new(self.min.x, self.min.y, self.min.z),
+            Vec3::new(self.min.x, self.min.y, self.max.z),
+            Vec3::new(self.min.x, self.max.y, self.min.z),
+            Vec3::new(self.min.x, self.max.y, self.max.z),
+            Vec3::new(self.max.x, self.min.y, self.min.z),
+            Vec3::new(self.max.x, self.min.y, self.max.z),
+            Vec3::new(self.max.x, self.max.y, self.min.z),
+            Vec3::new(self.max.x, self.max.y, self.max.z),
+        ]
+    }
+
+    pub fn apply_transform(&self, transform: &Mat4) -> AABB {
+        let transformed_corners = self
+            .corners()
+            .map(|corner| (transform * Vec4::new(corner.x, corner.y, corner.z, 1.0)).xyz());
+
+        let mut new_aabb = AABB {
+            min: transformed_corners[0],
+            max: transformed_corners[0],
+        };
+
+        transformed_corners
+            .iter()
+            .for_each(|corner| new_aabb.expand_to_hold(*corner));
+
+        new_aabb
+    }
+}
+
+unsafe fn send_models_to_gpu(
+    gl: &Gl,
+    entries: &[BlueprintEntry],
+    model_loader: &mut ModelLoader,
+) -> (Vec<ModelGraphics>, AABB) {
+    let mut built_models: HashMap<String, (GLuint, GLsizei, AABB)> =
+        HashMap::with_capacity(entries.len());
+    let mut models = Vec::with_capacity(entries.len());
+    let mut aabb = AABB::default();
+
+    let mut model_vertex_buffer = Vec::new();
+
     for entry in entries {
         let model = match model_loader.load_model(&entry.internal_name) {
             Model::Missing => continue,
@@ -146,114 +358,66 @@ pub fn perform_render(
         };
 
         let pos = translation(&Vec3::new(entry.x as f32, entry.l as f32, entry.y as f32));
-        let pos = nalgebra_glm::scale(&pos, &Vec3::new(1.0, 1.0, -1.0));
-        let building = rotate_y(&pos, entry.r as f32 * f32::PI() / 2.0);
+        let pos = scale(&pos, &Vec3::new(1.0, 1.0, -1.0));
+        let pos = rotate_y(&pos, entry.r as f32 * f32::PI() / 2.0);
 
-        unsafe {
-            program.uniforms.set_model(&graphics.gl, &building);
-            program.uniforms.set_view(&graphics.gl, &view);
-            program.uniforms.set_projection(&graphics.gl, &projection);
+        if let Some(&(vbo, vertex_count, model_aabb)) = built_models.get(&entry.internal_name) {
+            aabb.expand_to_hold_aabb(model_aabb.apply_transform(&pos));
 
-            program.uniforms.set_camera(&graphics.gl, &camera_pos);
-            program
-                .uniforms
-                .set_light_direction(&graphics.gl, &light_direction);
-            check_for_errors(&graphics.gl);
+            models.push(ModelGraphics {
+                vbo,
+                vertex_count,
+                model_uniform: pos,
+                color_uniform: Vec3::new(0.18823, 0.51372, 0.86274),
+            });
+
+            continue;
         }
 
-        for group in model.data.objects.iter().flat_map(|x| x.groups.iter()) {
-            vertex_list.clear();
-            vertex::vertex_buffer_for_group(&mut vertex_list, model, group);
+        let mut model_aabb = AABB::default();
+        model
+            .data
+            .position
+            .iter()
+            .map(|array| Vec3::from(*array))
+            .for_each(|vertex| model_aabb.expand_to_hold(vertex));
 
-            unsafe {
-                graphics.gl.BindVertexArray(vao);
+        aabb.expand_to_hold_aabb(model_aabb.apply_transform(&pos));
 
-                let vbo = load_vbo(&graphics.gl, &vertex_list);
+        model_vertex_buffer.clear();
+        vertex_buffer_for_model(&mut model_vertex_buffer, model);
 
-                graphics.gl.BindBuffer(gl::ARRAY_BUFFER, vbo);
-
-                Vertex::configure_vao(&graphics.gl);
-
-                graphics
-                    .gl
-                    .DrawArrays(gl::TRIANGLES, 0, vertex_list.len() as GLsizei);
-
-                graphics.gl.DeleteBuffers(1, &vbo as *const _);
-                check_for_errors(&graphics.gl);
-            }
-        }
-    }
-
-    println!("Rendered all buildings");
-
-    let mut buffer = vec![0u8; (width * height * 3) as usize];
-
-    unsafe {
-        graphics.gl.Finish();
-        println!("Finished Rendering");
-        check_for_errors(&graphics.gl);
-
-        println!("Reading pixels to buffer");
-        graphics.gl.ReadPixels(
-            0,
-            0,
-            width as GLsizei,
-            height as GLsizei,
-            gl::RGB,
-            gl::UNSIGNED_BYTE,
-            buffer.as_mut_ptr() as *mut _,
+        let vbo = load_vbo(gl, &model_vertex_buffer);
+        let vertex_count = model_vertex_buffer.len() as GLsizei;
+        built_models.insert(
+            entry.internal_name.to_owned(),
+            (vbo, vertex_count, model_aabb),
         );
-        check_for_errors(&graphics.gl);
 
-        // TODO: Actually free resources... or not. It won't matter if the process gets cleaned up
-        // by the OS after each run
-        // graphics.gl.BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
-        // graphics.gl.BindRenderbuffer(gl::RENDERBUFFER, 0);
-        // graphics.gl.DeleteFramebuffers(1, &fbo);
-        // graphics.gl.DeleteRenderbuffers(1, &rbo);
+        models.push(ModelGraphics {
+            vbo,
+            vertex_count,
+            model_uniform: pos,
+            color_uniform: Vec3::new(0.18823, 0.51372, 0.86274),
+        });
     }
 
-    println!("Freed rendering resources");
-
-    let mut img = RgbImage::from_raw(width, height, buffer).unwrap();
-
-    println!("Flipping image in memory");
-    flip_vertical_in_place(&mut img);
-
-    println!(
-        "Shrinking image by a factor of {}",
-        FORCED_SAMPLE_MULTIPLIER
-    );
-    let out = resize(
-        &img,
-        width / FORCED_SAMPLE_MULTIPLIER,
-        height / FORCED_SAMPLE_MULTIPLIER,
-        FilterType::Triangle,
-    );
-
-    println!("Saving image to disk");
-    out.save("out_glutin.png").unwrap();
-
-    println!("Wrote image!");
-
-    Ok(())
+    (models, aabb)
 }
 
-pub fn load_vbo<T>(gl: &Gl, buffer: &[T]) -> GLuint {
-    unsafe {
-        let mut vbo = 0;
-        gl.GenBuffers(1, &mut vbo);
-        gl.BindBuffer(gl::ARRAY_BUFFER, vbo);
+pub unsafe fn load_vbo<T>(gl: &Gl, buffer: &[T]) -> GLuint {
+    let mut vbo = 0;
+    gl.GenBuffers(1, &mut vbo);
+    gl.BindBuffer(gl::ARRAY_BUFFER, vbo);
 
-        gl.BufferData(
-            gl::ARRAY_BUFFER,
-            (size_of::<T>() * buffer.len()) as GLsizeiptr,
-            buffer.as_ptr() as *const _,
-            gl::STATIC_DRAW,
-        );
+    gl.BufferData(
+        gl::ARRAY_BUFFER,
+        (size_of::<T>() * buffer.len()) as GLsizeiptr,
+        buffer.as_ptr() as *const _,
+        gl::STATIC_DRAW,
+    );
 
-        vbo
-    }
+    vbo
 }
 
 #[track_caller]

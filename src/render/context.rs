@@ -32,7 +32,6 @@ impl Deref for DisplayManager {
 
 fn pick_gl_config(config_iter: Box<dyn Iterator<Item = Config> + '_>) -> Config {
     config_iter
-        .inspect(|x| println!("depth: {:?}, samples: {}", x.depth_size(), x.num_samples()))
         .reduce(|best, next| {
             if next.num_samples() > best.num_samples() {
                 next
