@@ -1,10 +1,12 @@
+use nalgebra_glm::Vec3;
 use obj::Obj;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader};
 use std::path::{Path, PathBuf};
 use std::process::exit;
+use std::rc::Rc;
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ModelTweaksConfig {
@@ -40,16 +42,15 @@ pub enum ModelTweaks {
 
 pub struct ModelLoader {
     _config: ModelTweaksConfig,
-    resolved_models: HashMap<String, Model>,
+    resolved_objects: HashMap<String, Rc<Obj>>,
+    model_sets: HashMap<String, Vec<Model>>,
     model_dir: PathBuf,
 }
 
-pub enum Model {
-    Resolved {
-        model: Obj,
-        // transform: Trans
-    },
-    Missing,
+
+pub struct Model {
+    pub model: Rc<Obj>,
+    pub offset: Vec3,
 }
 
 impl ModelLoader {
@@ -70,9 +71,10 @@ impl ModelLoader {
                 Ok(config) => {
                     return ModelLoader {
                         _config: config,
-                        resolved_models: HashMap::new(),
+                        resolved_objects: HashMap::new(),
+                        model_sets: HashMap::new(),
                         model_dir,
-                    }
+                    };
                 }
                 Err(e) => {
                     eprintln!("Error: failed to read model tweaks file: {}", e);
@@ -83,12 +85,13 @@ impl ModelLoader {
 
         ModelLoader {
             _config: ModelTweaksConfig::default(),
-            resolved_models: HashMap::new(),
+            resolved_objects: HashMap::new(),
+            model_sets: HashMap::new(),
             model_dir,
         }
     }
 
-    fn try_load_model<P: AsRef<Path>>(path: P) -> Option<Model> {
+    fn try_load_object<P: AsRef<Path>>(path: P) -> Option<Obj> {
         if !path.as_ref().is_file() {
             return None;
         }
@@ -101,121 +104,154 @@ impl ModelLoader {
                     path.as_ref().display(),
                     e
                 );
-                return Some(Model::Missing);
+                return None;
             }
         };
 
         if let Err(e) = obj.load_mtls() {
             eprintln!("Error: failed to load model materials: {}", e);
-            return Some(Model::Missing);
+            return None;
         }
 
         println!("Loaded model for {}", path.as_ref().display());
-        Some(Model::Resolved { model: obj })
+        Some(obj)
     }
 
-    pub fn load_model(&mut self, name: &str) -> &Model {
+    fn find_object(&mut self, mut name: &str) -> Option<Rc<Obj>> {
+        if let Some(obj) = self.resolved_objects.get(name) {
+            return Some(obj.clone());
+        }
+
+        'search: loop {
+            if let Some(obj) = Self::try_load_object(format!("{}.obj", name)) {
+                let reference_counted = Rc::new(obj);
+                self.resolved_objects.insert(name.to_owned(), reference_counted.clone());
+                return Some(reference_counted);
+            }
+
+            for suffix in ["InternalVariant", "Default"] {
+                if let Some(remaining) = name.strip_suffix(suffix) {
+                    name = remaining;
+                    continue 'search;
+                }
+            }
+
+            return None;
+        }
+    }
+
+    pub fn load_model(&mut self, name: &str) -> &[Model] {
         self.ensure_model_loaded(name);
-        self.resolved_models.get(name).unwrap()
+        &self.model_sets.get(name).unwrap()[..]
     }
 
     fn ensure_model_loaded(&mut self, name: &str) {
-        if self.resolved_models.contains_key(name) {
+        if self.model_sets.contains_key(name) {
             return;
         }
 
-        // TODO: Use the tweaks instead of just hard coding everything
-        let mut file = internal_name_mapping_adjustments(name);
+        let model_set = match internal_name_mapping_adjustments(name) {
+            None => Vec::from_iter(
+                self.find_object(name)
+                    .map(|model| Model {
+                        model,
+                        offset: Vec3::default(),
+                    })),
+            Some(mappings) => Vec::from_iter(
+                mappings.iter()
+                    .filter_map(|&Mapping { file, offset }| {
+                        Some(Model {
+                            model: self.find_object(file)?,
+                            offset,
+                        })
+                    })),
+        };
 
-        let path = self.model_dir.join(format!("{}.obj", file));
-        if let Some(model) = Self::try_load_model(path) {
-            self.resolved_models.insert(name.to_owned(), model);
-            return;
+
+        if model_set.is_empty() {
+            println!("Failed to find model for {}; building will not be rendered", name);
         }
 
-        if let Some(remaining) = file.strip_suffix("InternalVariant") {
-            file = remaining;
-
-            let path = self.model_dir.join(format!("{}.obj", file));
-            if let Some(model) = Self::try_load_model(path) {
-                self.resolved_models.insert(name.to_owned(), model);
-                return;
-            }
-        }
-
-        if let Some(remaining) = file.strip_suffix("Default") {
-            file = remaining;
-            let path = self.model_dir.join(format!("{}.obj", file));
-            if let Some(model) = Self::try_load_model(path) {
-                self.resolved_models.insert(name.to_owned(), model);
-                return;
-            }
-        }
-
-        println!(
-            "Failed to find model for {}; building will not be rendered",
-            name
-        );
-        self.resolved_models.insert(name.to_owned(), Model::Missing);
+        self.model_sets.insert(name.to_owned(), model_set);
     }
 
     pub fn load_counts(&self) -> (usize, usize) {
         let resolved = self
-            .resolved_models
+            .model_sets
             .iter()
-            .filter(|(_, x)| matches!(x, Model::Resolved { .. }))
+            .filter(|(_, x)| !x.is_empty())
             .count();
-        (resolved, self.resolved_models.len())
+        (resolved, self.model_sets.len())
     }
 }
 
-fn internal_name_mapping_adjustments(internal_name: &str) -> &str {
-    match internal_name {
+#[derive(Copy, Clone)]
+pub struct Mapping<'s> {
+    file: &'s str,
+    offset: Vec3,
+}
+
+impl<'s> Mapping<'s> {
+    fn new(file: &'s str, offset: Vec3) -> Self {
+        Mapping { file, offset }
+    }
+
+    fn redirect(file: &'s str) -> Self {
+        Mapping {
+            file,
+            offset: Vec3::default(),
+        }
+    }
+}
+
+fn internal_name_mapping_adjustments(internal_name: &str) -> Option<&[Mapping]> {
+    Some(match internal_name {
         //belts
-        "BeltDefaultForwardInternalVariant" => "Belt_Straight",
-        "BeltDefaultRightInternalVariant" => "Belt_90_R",
-        "BeltDefaultLeftInternalVariant" => "Belt_90_L",
+        "BeltDefaultForwardInternalVariant" => &[Mapping::redirect("Belt_Straight")],
+        "BeltDefaultRightInternalVariant" => &[Mapping::redirect("Belt_90_R")],
+        "BeltDefaultLeftInternalVariant" => &[Mapping::redirect("Belt_90_L")],
         //vertical
-        "Lift1UpBackwardInternalVariant" => "Lift1UpBackwards",
+        "Lift1UpBackwardInternalVariant" => &[Mapping::redirect("Lift1UpBackwards")],
         //belts special
-        "SplitterTShapeInternalVariant" => "Splitter2to1T",
-        "MergerTShapeInternalVariant" => "Merger2to1T",
-        "BeltPortSenderInternalVariant" => "BeltPortSender",
-        "BeltPortReceiverInternalVariant" => "BeltPortReceiver",
+        "SplitterTShapeInternalVariant" => &[Mapping::redirect("Splitter2to1T")],
+        "MergerTShapeInternalVariant" => &[Mapping::redirect("Merger2to1T")],
+        "BeltPortSenderInternalVariant" => &[Mapping::redirect("BeltPortSender")],
+        "BeltPortReceiverInternalVariant" => &[Mapping::redirect("BeltPortReceiver")],
 
         //rotating
-        "RotatorOneQuadInternalVariant" => "Rotator1QuadPlatform90CC", // arrows onlu
-        "RotatorOneQuadCCWInternalVariant" => "Rotator1QuadPlatform90CW", // ^
-        "RotatorHalfInternalVariant" => "Rotator1QuadPlatform180", // ^^
+        "RotatorOneQuadInternalVariant" => &[Mapping::redirect("Rotator1Quad"), Mapping::new("Rotator1QuadPlatform90CC", Vec3::new(0.0, 0.05, 0.0))], // arrows only
+        "RotatorOneQuadCCWInternalVariant" => &[Mapping::redirect("Rotator1Quad"), Mapping::new("Rotator1QuadPlatform90CW", Vec3::new(0.0, 0.05, 0.0))], // ^
+        "RotatorHalfInternalVariant" => &[Mapping::redirect("Rotator1Quad"), Mapping::new("Rotator1QuadPlatform180", Vec3::new(0.0, 0.05, 0.0))], // ^^
 
         //processing
-        "CutterDefaultInternalVariant" => "CutterStatic_Fixed",
-        "StackerDefaultInternalVariant" => "StackerSolid",
-        "PainterDefaultInternalVariant" => "PainterBasin",
-        "MixerDefaultInternalVariant" => "MixerFoundation",
-        "CutterHalfInternalVariant" => "HalfCutter",
+        "CutterDefaultInternalVariant" => &[Mapping::redirect("CutterStatic_Fixed")],
+        "StackerDefaultInternalVariant" => &[Mapping::redirect("StackerSolid")],
+        "PainterDefaultInternalVariant" => &[Mapping::redirect("PainterBasin")],
+        "MixerDefaultInternalVariant" => &[Mapping::redirect("MixerFoundation")],
+        "CutterHalfInternalVariant" => &[Mapping::redirect("HalfCutter")],
+        "PinPusherDefaultInternalVariant" => &[Mapping::redirect("PinPusher"), Mapping::redirect("PinPusherRotator1"), Mapping::new("PinPusherClampR", Vec3::new(0.0, 0.16, 0.0)), Mapping::new("PinPusherClampL", Vec3::new(0.0, 0.15, 0.0))],
 
         //pipes normal
-        "PipeLeftInternalVariant" => "PipeLeftGlas",
-        "PipeRightInternalVariant" => "PipeRightGlas",
-        "PipeCrossInternalVariant" => "PipeCrossJunctionGlas",
-        "PipeJunctionInternalVariant" => "PipeJunctionGlas",
+        "PipeLeftInternalVariant" => &[Mapping::redirect("PipeLeftGlas")],
+        "PipeRightInternalVariant" => &[Mapping::redirect("PipeRightGlas")],
+        "PipeCrossInternalVariant" => &[Mapping::redirect("PipeCrossJunctionGlas")],
+        "PipeJunctionInternalVariant" => &[Mapping::redirect("PipeJunctionGlas")],
         //pipes up
-        "PipeUpForwardInternalVariant" => "Pipe1UpForwardGlas",
-        "PipeUpBackwardInternalVariant" => "Pipe1UpBackwardGlas",
-        "PipeUpLeftInternalVariant" => "Pipe1UpLeftBlueprint", // Contains the pump
-        "PipeUpRightInternalVariant" => "Pipe1UpRightBlueprint", // ^
+        "PipeUpForwardInternalVariant" => &[Mapping::redirect("Pipe1UpForwardGlas")],
+        "PipeUpBackwardInternalVariant" => &[Mapping::redirect("Pipe1UpBackwardGlas")],
+        "PipeUpLeftInternalVariant" => &[Mapping::redirect("Pipe1UpLeftBlueprint")], // Contains the pump
+        "PipeUpRightInternalVariant" => &[Mapping::redirect("Pipe1UpRightBlueprint")], // ^
         //pipes down
-        "PipeDownForwardInternalVariant" => "Pipe1DownGlas", 
-        "PipeDownBackwardInternalVariant" => "Pipe1DownBackwardGlas",
-        "PipeDownRightInternalVariant" => "Pipe1DownRightGlas",
-        "PipeDownLeftInternalVariant" => "Pipe1DownLeftGlas",
+        "PipeDownForwardInternalVariant" => &[Mapping::redirect("Pipe1DownGlas")],
+        "PipeDownBackwardInternalVariant" => &[Mapping::redirect("Pipe1DownBackwardGlas")],
+        "PipeDownRightInternalVariant" => &[Mapping::redirect("Pipe1DownRightGlas")],
+        "PipeDownLeftInternalVariant" => &[Mapping::redirect("Pipe1DownLeftGlas")],
 
         // Support Buildings
-        "LabelDefaultInternalVariant" => "LabelSupport",
-        "FluidStorageDefaultInternalVariant" => "PaintTankFoundation",
-        "StorageDefaultInternalVariant" => "StorageSolid",
-        "SandboxFluidProducerDefaultInternalVariant" => "SandboxIFluidProducer",
-        x => x,
-    }
+        "LabelDefaultInternalVariant" => &[Mapping::redirect("LabelSupport")],
+        "FluidStorageDefaultInternalVariant" => &[Mapping::redirect("PaintTankFoundation")],
+        "StorageDefaultInternalVariant" => &[Mapping::redirect("StorageSolid")],
+        "SandboxFluidProducerDefaultInternalVariant" => &[Mapping::redirect("SandboxIFluidProducer")],
+        _ => return None,
+    })
 }

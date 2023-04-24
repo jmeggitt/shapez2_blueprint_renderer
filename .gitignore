@@ -1,2 +1,6 @@
 /target
 Cargo.lock
+
+models/
+blueprint_render.png
+bp.txt
