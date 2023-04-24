@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::{BufReader};
 use std::path::{Path, PathBuf};
 use std::process::exit;
+use std::rc::Rc;
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ModelTweaksConfig {
@@ -41,17 +42,15 @@ pub enum ModelTweaks {
 
 pub struct ModelLoader {
     _config: ModelTweaksConfig,
-    resolved_models: HashMap<String, Vec<Model>>,
+    resolved_objects: HashMap<String, Rc<Obj>>,
+    model_sets: HashMap<String, Vec<Model>>,
     model_dir: PathBuf,
 }
 
-pub enum Model {
-    Resolved {
-        model: Obj,
-        offset: Vec3
-        // transform: Trans
-    },
-    Missing,
+
+pub struct Model {
+    pub model: Rc<Obj>,
+    pub offset: Vec3,
 }
 
 impl ModelLoader {
@@ -72,9 +71,10 @@ impl ModelLoader {
                 Ok(config) => {
                     return ModelLoader {
                         _config: config,
-                        resolved_models: HashMap::new(),
+                        resolved_objects: HashMap::new(),
+                        model_sets: HashMap::new(),
                         model_dir,
-                    }
+                    };
                 }
                 Err(e) => {
                     eprintln!("Error: failed to read model tweaks file: {}", e);
@@ -85,12 +85,13 @@ impl ModelLoader {
 
         ModelLoader {
             _config: ModelTweaksConfig::default(),
-            resolved_models: HashMap::new(),
+            resolved_objects: HashMap::new(),
+            model_sets: HashMap::new(),
             model_dir,
         }
     }
 
-    fn try_load_model<P: AsRef<Path>>(path: P, offset: Vec3) -> Option<Model> {
+    fn try_load_object<P: AsRef<Path>>(path: P) -> Option<Obj> {
         if !path.as_ref().is_file() {
             return None;
         }
@@ -103,256 +104,154 @@ impl ModelLoader {
                     path.as_ref().display(),
                     e
                 );
-                return Some(Model::Missing);
+                return None;
             }
         };
 
         if let Err(e) = obj.load_mtls() {
             eprintln!("Error: failed to load model materials: {}", e);
-            return Some(Model::Missing);
+            return None;
         }
 
         println!("Loaded model for {}", path.as_ref().display());
-        Some(Model::Resolved { model: obj, offset })
+        Some(obj)
     }
 
-    pub fn load_model(&mut self, name: &str) -> &Vec<Model> {
+    fn find_object(&mut self, mut name: &str) -> Option<Rc<Obj>> {
+        if let Some(obj) = self.resolved_objects.get(name) {
+            return Some(obj.clone());
+        }
+
+        'search: loop {
+            if let Some(obj) = Self::try_load_object(format!("{}.obj", name)) {
+                let reference_counted = Rc::new(obj);
+                self.resolved_objects.insert(name.to_owned(), reference_counted.clone());
+                return Some(reference_counted);
+            }
+
+            for suffix in ["InternalVariant", "Default"] {
+                if let Some(remaining) = name.strip_suffix(suffix) {
+                    name = remaining;
+                    continue 'search;
+                }
+            }
+
+            return None;
+        }
+    }
+
+    pub fn load_model(&mut self, name: &str) -> &[Model] {
         self.ensure_model_loaded(name);
-        self.resolved_models.get(name).unwrap()
+        &self.model_sets.get(name).unwrap()[..]
     }
 
     fn ensure_model_loaded(&mut self, name: &str) {
-        if self.resolved_models.contains_key(name) {
+        if self.model_sets.contains_key(name) {
             return;
         }
 
-        // TODO: Use the tweaks instead of just hard coding everything
-        let files = internal_name_mapping_adjustments(name);
-        let mut models = vec![];
-        
-        for mut entry in files {
-            let path = self.model_dir.join(format!("{}.obj", entry.file));
-            if let Some(model) = Self::try_load_model(path, entry.offset) {
-                models.push(model);
-                continue;
-            }
+        let model_set = match internal_name_mapping_adjustments(name) {
+            None => Vec::from_iter(
+                self.find_object(name)
+                    .map(|model| Model {
+                        model,
+                        offset: Vec3::default(),
+                    })),
+            Some(mappings) => Vec::from_iter(
+                mappings.iter()
+                    .filter_map(|&Mapping { file, offset }| {
+                        Some(Model {
+                            model: self.find_object(file)?,
+                            offset,
+                        })
+                    })),
+        };
 
-            if let Some(remaining) = entry.file.strip_suffix("InternalVariant") {
-                entry.file = remaining.to_owned();
 
-                let path = self.model_dir.join(format!("{}.obj", entry.file));
-                if let Some(model) = Self::try_load_model(path, entry.offset) {
-                    models.push(model);
-                    continue;
-                }
-            }
-
-            if let Some(remaining) = entry.file.strip_suffix("Default") {
-               entry.file = remaining.to_owned();
-                let path = self.model_dir.join(format!("{}.obj", entry.file));
-                if let Some(model) = Self::try_load_model(path, entry.offset) {
-                    models.push(model);
-                    continue;
-                }
-            }
-        } 
-        
-        if !models.is_empty() {
-            self.resolved_models.insert(name.to_owned(), models);
-            return;
+        if model_set.is_empty() {
+            println!("Failed to find model for {}; building will not be rendered", name);
         }
 
-        println!(
-            "Failed to find model for {}; building will not be rendered",
-            name
-        );
-        self.resolved_models.insert(name.to_owned(), vec![]);
+        self.model_sets.insert(name.to_owned(), model_set);
     }
 
     pub fn load_counts(&self) -> (usize, usize) {
         let resolved = self
-            .resolved_models
+            .model_sets
             .iter()
-            .filter(|(_, x)| x.iter().any(|y| matches!(y, Model::Resolved { .. })))
+            .filter(|(_, x)| !x.is_empty())
             .count();
-        (resolved, self.resolved_models.len())
+        (resolved, self.model_sets.len())
     }
 }
 
-#[derive(Clone)]
-pub struct Mapping {
-    file: String,
-    offset: Vec3
+#[derive(Copy, Clone)]
+pub struct Mapping<'s> {
+    file: &'s str,
+    offset: Vec3,
 }
 
-fn internal_name_mapping_adjustments(internal_name: &str) -> Vec<Mapping> {
-    match internal_name {
+impl<'s> Mapping<'s> {
+    fn new(file: &'s str, offset: Vec3) -> Self {
+        Mapping { file, offset }
+    }
+
+    fn redirect(file: &'s str) -> Self {
+        Mapping {
+            file,
+            offset: Vec3::default(),
+        }
+    }
+}
+
+fn internal_name_mapping_adjustments(internal_name: &str) -> Option<&[Mapping]> {
+    Some(match internal_name {
         //belts
-        "BeltDefaultForwardInternalVariant" => vec![Mapping {
-            file: "Belt_Straight".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "BeltDefaultRightInternalVariant" => vec![Mapping {
-            file: "Belt_90_R".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "BeltDefaultLeftInternalVariant" => vec![Mapping {
-            file: "Belt_90_L".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
+        "BeltDefaultForwardInternalVariant" => &[Mapping::redirect("Belt_Straight")],
+        "BeltDefaultRightInternalVariant" => &[Mapping::redirect("Belt_90_R")],
+        "BeltDefaultLeftInternalVariant" => &[Mapping::redirect("Belt_90_L")],
         //vertical
-        "Lift1UpBackwardInternalVariant" => vec![Mapping {
-            file: "Lift1UpBackwards".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
+        "Lift1UpBackwardInternalVariant" => &[Mapping::redirect("Lift1UpBackwards")],
         //belts special
-        "SplitterTShapeInternalVariant" => vec![Mapping {
-            file: "Splitter2to1T".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "MergerTShapeInternalVariant" => vec![Mapping {
-            file: "Merger2to1T".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "BeltPortSenderInternalVariant" => vec![Mapping {
-            file: "BeltPortSender".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "BeltPortReceiverInternalVariant" => vec![Mapping {
-            file: "BeltPortReceiver".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
+        "SplitterTShapeInternalVariant" => &[Mapping::redirect("Splitter2to1T")],
+        "MergerTShapeInternalVariant" => &[Mapping::redirect("Merger2to1T")],
+        "BeltPortSenderInternalVariant" => &[Mapping::redirect("BeltPortSender")],
+        "BeltPortReceiverInternalVariant" => &[Mapping::redirect("BeltPortReceiver")],
 
         //rotating
-        "RotatorOneQuadInternalVariant" => vec![Mapping {
-            file: "Rotator1Quad".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }, Mapping {
-            file: "Rotator1QuadPlatform90CC".to_string(),
-            offset: Vec3::new(0.0, 0.05, 0.0)
-        }], // arrows onlu
-        "RotatorOneQuadCCWInternalVariant" => vec![Mapping {
-            file: "Rotator1Quad".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }, Mapping {
-            file: "Rotator1QuadPlatform90CW".to_string(),
-            offset: Vec3::new(0.0, 0.05, 0.0)
-        }], // ^
-        "RotatorHalfInternalVariant" => vec![Mapping {
-            file: "Rotator1Quad".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }, Mapping {
-            file: "Rotator1QuadPlatform180".to_string(),
-            offset: Vec3::new(0.0, 0.05, 0.0)
-        }], // ^^
+        "RotatorOneQuadInternalVariant" => &[Mapping::redirect("Rotator1Quad"), Mapping::new("Rotator1QuadPlatform90CC", Vec3::new(0.0, 0.05, 0.0))], // arrows only
+        "RotatorOneQuadCCWInternalVariant" => &[Mapping::redirect("Rotator1Quad"), Mapping::new("Rotator1QuadPlatform90CW", Vec3::new(0.0, 0.05, 0.0))], // ^
+        "RotatorHalfInternalVariant" => &[Mapping::redirect("Rotator1Quad"), Mapping::new("Rotator1QuadPlatform180", Vec3::new(0.0, 0.05, 0.0))], // ^^
 
         //processing
-        "CutterDefaultInternalVariant" => vec![Mapping {
-            file: "CutterStatic_Fixed".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "StackerDefaultInternalVariant" => vec![Mapping {
-            file: "StackerSolid".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "PainterDefaultInternalVariant" => vec![Mapping {
-            file: "PainterBasin".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "MixerDefaultInternalVariant" => vec![Mapping {
-            file: "MixerFoundation".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "CutterHalfInternalVariant" => vec![Mapping {
-            file: "HalfCutter".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "PinPusherDefaultInternalVariant" => vec![Mapping {
-            file: "PinPusher".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }, Mapping {
-            file: "PinPusherRotator1".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }, Mapping {
-            file: "PinPusherClampR".to_string(),
-            offset: Vec3::new(0.0, 0.16, 0.0)
-        }, Mapping {
-            file: "PinPusherClampL".to_string(),
-            offset: Vec3::new(0.0, 0.15, 0.0)
-        }],
+        "CutterDefaultInternalVariant" => &[Mapping::redirect("CutterStatic_Fixed")],
+        "StackerDefaultInternalVariant" => &[Mapping::redirect("StackerSolid")],
+        "PainterDefaultInternalVariant" => &[Mapping::redirect("PainterBasin")],
+        "MixerDefaultInternalVariant" => &[Mapping::redirect("MixerFoundation")],
+        "CutterHalfInternalVariant" => &[Mapping::redirect("HalfCutter")],
+        "PinPusherDefaultInternalVariant" => &[Mapping::redirect("PinPusher"), Mapping::redirect("PinPusherRotator1"), Mapping::new("PinPusherClampR", Vec3::new(0.0, 0.16, 0.0)), Mapping::new("PinPusherClampL", Vec3::new(0.0, 0.15, 0.0))],
 
         //pipes normal
-        "PipeLeftInternalVariant" => vec![Mapping {
-            file: "PipeLeftGlas".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "PipeRightInternalVariant" => vec![Mapping {
-            file: "PipeRightGlas".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "PipeCrossInternalVariant" => vec![Mapping {
-            file: "PipeCrossJunctionGlas".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "PipeJunctionInternalVariant" => vec![Mapping {
-            file: "PipeJunctionGlas".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
+        "PipeLeftInternalVariant" => &[Mapping::redirect("PipeLeftGlas")],
+        "PipeRightInternalVariant" => &[Mapping::redirect("PipeRightGlas")],
+        "PipeCrossInternalVariant" => &[Mapping::redirect("PipeCrossJunctionGlas")],
+        "PipeJunctionInternalVariant" => &[Mapping::redirect("PipeJunctionGlas")],
         //pipes up
-        "PipeUpForwardInternalVariant" => vec![Mapping {
-            file: "Pipe1UpForwardGlas".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "PipeUpBackwardInternalVariant" => vec![Mapping {
-            file: "Pipe1UpBackwardGlas".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "PipeUpLeftInternalVariant" => vec![Mapping {
-            file: "Pipe1UpLeftBlueprint".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }], // Contains the pump
-        "PipeUpRightInternalVariant" => vec![Mapping {
-            file: "Pipe1UpRightBlueprint".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }], // ^
+        "PipeUpForwardInternalVariant" => &[Mapping::redirect("Pipe1UpForwardGlas")],
+        "PipeUpBackwardInternalVariant" => &[Mapping::redirect("Pipe1UpBackwardGlas")],
+        "PipeUpLeftInternalVariant" => &[Mapping::redirect("Pipe1UpLeftBlueprint")], // Contains the pump
+        "PipeUpRightInternalVariant" => &[Mapping::redirect("Pipe1UpRightBlueprint")], // ^
         //pipes down
-        "PipeDownForwardInternalVariant" => vec![Mapping {
-            file: "Pipe1DownGlas".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }], 
-        "PipeDownBackwardInternalVariant" => vec![Mapping {
-            file: "Pipe1DownBackwardGlas".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "PipeDownRightInternalVariant" => vec![Mapping {
-            file: "Pipe1DownRightGlas".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "PipeDownLeftInternalVariant" => vec![Mapping {
-            file: "Pipe1DownLeftGlas".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
+        "PipeDownForwardInternalVariant" => &[Mapping::redirect("Pipe1DownGlas")],
+        "PipeDownBackwardInternalVariant" => &[Mapping::redirect("Pipe1DownBackwardGlas")],
+        "PipeDownRightInternalVariant" => &[Mapping::redirect("Pipe1DownRightGlas")],
+        "PipeDownLeftInternalVariant" => &[Mapping::redirect("Pipe1DownLeftGlas")],
 
         // Support Buildings
-        "LabelDefaultInternalVariant" => vec![Mapping {
-            file: "LabelSupport".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "FluidStorageDefaultInternalVariant" => vec![Mapping {
-            file: "PaintTankFoundation".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "StorageDefaultInternalVariant" => vec![Mapping {
-            file: "StorageSolid".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        "SandboxFluidProducerDefaultInternalVariant" => vec![Mapping {
-            file: "SandboxIFluidProducer".to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-        x => vec![Mapping {
-            file: x.to_string(),
-            offset: Vec3::new(0.0, 0.0, 0.0)
-        }],
-    }
+        "LabelDefaultInternalVariant" => &[Mapping::redirect("LabelSupport")],
+        "FluidStorageDefaultInternalVariant" => &[Mapping::redirect("PaintTankFoundation")],
+        "StorageDefaultInternalVariant" => &[Mapping::redirect("StorageSolid")],
+        "SandboxFluidProducerDefaultInternalVariant" => &[Mapping::redirect("SandboxIFluidProducer")],
+        _ => return None,
+    })
 }
