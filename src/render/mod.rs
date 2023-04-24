@@ -13,12 +13,14 @@ pub use context::setup_opengl;
 pub use gl::Gl;
 use image::imageops::{flip_vertical_in_place, resize, FilterType};
 use image::RgbImage;
-use nalgebra_glm::{look_at, perspective, rotate_y, scale, translation, Mat4, Vec3, Vec4};
+use nalgebra_glm::{
+    look_at, perspective, rotate_y, rotation, scale, translation, Mat4, Vec3, Vec4,
+};
 use num_traits::FloatConst;
 use std::collections::HashMap;
 use std::mem::size_of;
 
-const FORCED_SAMPLE_MULTIPLIER: u32 = 2;
+const FORCED_SAMPLE_MULTIPLIER: u32 = 4;
 
 pub fn perform_render(
     entries: &[BlueprintEntry],
@@ -130,10 +132,15 @@ unsafe fn perform_render_impl(
 
     let (mut models, mut aabb) = send_models_to_gpu(&graphics, entries, model_loader);
 
+    let mut rotate_model = false;
+    if aabb.max.x - aabb.min.x < aabb.max.z - aabb.min.z {
+        rotate_model = true;
+
+        aabb = aabb.apply_transform(&rotation(f32::PI() / 2.0, &Vec3::new(0.0, 1.0, 0.0)))
+    }
+
     let aspect_ratio = width as f32 / height as f32;
     let fovy = 0.6;
-
-    println!("AABB: {:?}", aabb);
 
     // projection
     let view_vector = Vec3::new(0.0, -1.0, 1.0).normalize();
@@ -154,23 +161,26 @@ unsafe fn perform_render_impl(
     let fovx = aspect_ratio * fovy;
     let min_x_t = x_extent / (fovx / 2.0).tan();
     let min_y_t = y_extent / (fovy / 2.0).tan();
-    let t = 1.05 * f32::max(min_x_t, min_y_t);
+    let t = 1.05 * (f32::max(min_x_t, min_y_t) + camera_space_aabb.min.z.abs());
 
     let extension = fovy.tan() / fovy.sin();
-    println!("{}", extension);
-
     let projection = perspective(
         aspect_ratio,
         fovy,
         0.1,
         extension * (t + camera_space_aabb.max.z),
     );
+
     let camera_pos = -t * view_vector;
-    let view = look_at(
+    let mut view = look_at(
         &(-t * view_vector),
         &Vec3::new(0.0, 0.0, 0.0),
         &Vec3::new(0.0, 1.0, 0.0),
     );
+
+    if rotate_model {
+        view = view * rotation(f32::PI() / 2.0, &Vec3::new(0.0, 1.0, 0.0));
+    }
 
     let light_direction = Vec3::new(1.0, -2.0, 1.0).normalize();
 
