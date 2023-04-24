@@ -2,6 +2,18 @@
 name = "shapez2_blueprint_renderer"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
+
+[profile.dev]
+debug = true
+
+[profile.dev.package.image]
+opt-level = 3
+overflow-checks = false
+
+[features]
+default = []
+hidden-window = []
 
 [dependencies]
 flate2 = "1.0.25"
@@ -10,9 +22,25 @@ serde = { version = "1.0.160", features = ["derive"] }
 base64 = "0.21.0"
 clap = { version = "4.2.2", features = ["derive"] }
 
-glium = "0.26"
+#glium = "0.26"
 obj = "0.10.2"
 image = "0.24.6"
 nalgebra-glm = "0.18.0"
 
 num-traits = "0.2.15"
+
+# Webglu
+#wgpu = { version="0.15.1", features=["glsl"] }
+#naga = "0.11.0"
+#pollster = "0.3.0"
+#futures-intrusive = "0.5.0"
+png = "0.17.8"
+
+glutin = "0.30.3"
+glutin-winit = "0.2.2"
+winit = "0.27.5"
+raw-window-handle = "0.5.0"
+
+[build-dependencies]
+gl_generator = "0.14"
+
