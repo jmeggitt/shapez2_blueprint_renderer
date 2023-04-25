@@ -13,12 +13,12 @@ pub use context::setup_opengl;
 pub use gl::Gl;
 use image::imageops::{flip_vertical_in_place, resize, FilterType};
 use image::RgbImage;
-use nalgebra_glm::{
-    look_at, perspective, rotate_y, rotation, scale, translation, Mat4, Vec3, Vec4,
-};
+use nalgebra_glm::{look_at, perspective, rotate_y, rotation, scale, translation, Mat4, Vec3, Vec4, translate};
 use num_traits::FloatConst;
 use std::collections::HashMap;
 use std::mem::size_of;
+use std::rc::Rc;
+use obj::Obj;
 
 const FORCED_SAMPLE_MULTIPLIER: u32 = 4;
 
@@ -46,8 +46,6 @@ pub fn perform_render(
 
     println!("Saving image to disk");
     out.save("out_glutin.png").unwrap();
-
-    println!("Wrote image!");
     Ok(())
 }
 
@@ -115,7 +113,6 @@ unsafe fn perform_render_impl(
     let program = unsafe { GeneralProgram::build(&graphics).unwrap() };
     println!("Built shader program");
 
-    // graphics.Enable(gl::FRAMEBUFFE)
     graphics.ClearColor(0.1, 0.1, 0.1, 1.0);
     graphics
         .gl
@@ -168,7 +165,7 @@ unsafe fn perform_render_impl(
         aspect_ratio,
         fovy,
         0.1,
-        extension * (t + camera_space_aabb.max.z),
+        2.0 * extension * (t + camera_space_aabb.max.z),
     );
 
     let camera_pos = -t * view_vector;
@@ -179,7 +176,7 @@ unsafe fn perform_render_impl(
     );
 
     if rotate_model {
-        view = view * rotation(f32::PI() / 2.0, &Vec3::new(0.0, 1.0, 0.0));
+        view *= rotation(f32::PI() / 2.0, &Vec3::new(0.0, 1.0, 0.0));
     }
 
     let light_direction = Vec3::new(1.0, -2.0, 1.0).normalize();
@@ -211,8 +208,10 @@ unsafe fn perform_render_impl(
 
     let mut buffer = vec![0u8; (width * height * 3) as usize];
 
-    println!("Wait for rendering to finish and extract pixels from framebuffer");
+    println!("Wait for rendering to finish");
     graphics.Finish();
+
+    println!("Waiting for GPU sync point so we can move finished image to main memory :/");
     graphics.ReadPixels(
         0,
         0,
@@ -223,6 +222,7 @@ unsafe fn perform_render_impl(
         buffer.as_mut_ptr() as *mut _,
     );
 
+    print!("Flipping, resizing, and saving image");
     check_for_errors(&graphics);
     match RgbImage::from_raw(width, height, buffer) {
         Some(mut img) => {
@@ -297,12 +297,12 @@ impl ModelGraphics {
 
 /// Axis Aligned Bounding Box
 #[derive(Copy, Clone, Debug, Default)]
-struct AABB {
+struct Aabb {
     min: Vec3,
     max: Vec3,
 }
 
-impl AABB {
+impl Aabb {
     pub fn expand_to_hold(&mut self, vertex: Vec3) {
         self.min.x = self.min.x.min(vertex.x);
         self.min.y = self.min.y.min(vertex.y);
@@ -313,7 +313,7 @@ impl AABB {
         self.max.z = self.max.z.max(vertex.z);
     }
 
-    pub fn expand_to_hold_aabb(&mut self, other: AABB) {
+    pub fn expand_to_hold_aabb(&mut self, other: Aabb) {
         self.expand_to_hold(other.min);
         self.expand_to_hold(other.max);
     }
@@ -331,12 +331,12 @@ impl AABB {
         ]
     }
 
-    pub fn apply_transform(&self, transform: &Mat4) -> AABB {
+    pub fn apply_transform(&self, transform: &Mat4) -> Aabb {
         let transformed_corners = self
             .corners()
             .map(|corner| (transform * Vec4::new(corner.x, corner.y, corner.z, 1.0)).xyz());
 
-        let mut new_aabb = AABB {
+        let mut new_aabb = Aabb {
             min: transformed_corners[0],
             max: transformed_corners[0],
         };
@@ -353,26 +353,53 @@ unsafe fn send_models_to_gpu(
     gl: &Gl,
     entries: &[BlueprintEntry],
     model_loader: &mut ModelLoader,
-) -> (Vec<ModelGraphics>, AABB) {
-    let mut built_models: HashMap<String, (GLuint, GLsizei, AABB)> =
+) -> (Vec<ModelGraphics>, Aabb) {
+    let mut built_models: HashMap<*const Obj, (GLuint, GLsizei, Aabb)> =
         HashMap::with_capacity(entries.len());
     let mut models = Vec::with_capacity(entries.len());
-    let mut aabb = AABB::default();
+    let mut aabb = Aabb::default();
 
     let mut model_vertex_buffer = Vec::new();
 
     for entry in entries {
-        let model = match model_loader.load_model(&entry.internal_name) {
-            Model::Missing => continue,
-            Model::Resolved { model } => model,
-        };
+        for Model{model, offset} in model_loader.load_model(&entry.internal_name) {
+            let pos = translation(&Vec3::new(entry.x as f32, entry.l as f32, entry.y as f32));
+            let pos = scale(&pos, &Vec3::new(1.0, 1.0, -1.0));
+            let pos = rotate_y(&pos, entry.r as f32 * f32::PI() / 2.0);
+            let pos = translate(&pos, offset);
 
-        let pos = translation(&Vec3::new(entry.x as f32, entry.l as f32, entry.y as f32));
-        let pos = scale(&pos, &Vec3::new(1.0, 1.0, -1.0));
-        let pos = rotate_y(&pos, entry.r as f32 * f32::PI() / 2.0);
+            if let Some(&(vbo, vertex_count, model_aabb)) = built_models.get(&Rc::as_ptr(model)) {
+                aabb.expand_to_hold_aabb(model_aabb.apply_transform(&pos));
 
-        if let Some(&(vbo, vertex_count, model_aabb)) = built_models.get(&entry.internal_name) {
+                models.push(ModelGraphics {
+                    vbo,
+                    vertex_count,
+                    model_uniform: pos,
+                    color_uniform: Vec3::new(0.18823, 0.51372, 0.86274),
+                });
+
+                continue;
+            }
+
+            let mut model_aabb = Aabb::default();
+            model
+                .data
+                .position
+                .iter()
+                .map(|array| Vec3::from(*array))
+                .for_each(|vertex| model_aabb.expand_to_hold(vertex));
+
             aabb.expand_to_hold_aabb(model_aabb.apply_transform(&pos));
+
+            model_vertex_buffer.clear();
+            vertex_buffer_for_model(&mut model_vertex_buffer, model);
+
+            let vbo = load_vbo(gl, &model_vertex_buffer);
+            let vertex_count = model_vertex_buffer.len() as GLsizei;
+            built_models.insert(
+                Rc::as_ptr(model),
+                (vbo, vertex_count, model_aabb),
+            );
 
             models.push(ModelGraphics {
                 vbo,
@@ -380,36 +407,7 @@ unsafe fn send_models_to_gpu(
                 model_uniform: pos,
                 color_uniform: Vec3::new(0.18823, 0.51372, 0.86274),
             });
-
-            continue;
         }
-
-        let mut model_aabb = AABB::default();
-        model
-            .data
-            .position
-            .iter()
-            .map(|array| Vec3::from(*array))
-            .for_each(|vertex| model_aabb.expand_to_hold(vertex));
-
-        aabb.expand_to_hold_aabb(model_aabb.apply_transform(&pos));
-
-        model_vertex_buffer.clear();
-        vertex_buffer_for_model(&mut model_vertex_buffer, model);
-
-        let vbo = load_vbo(gl, &model_vertex_buffer);
-        let vertex_count = model_vertex_buffer.len() as GLsizei;
-        built_models.insert(
-            entry.internal_name.to_owned(),
-            (vbo, vertex_count, model_aabb),
-        );
-
-        models.push(ModelGraphics {
-            vbo,
-            vertex_count,
-            model_uniform: pos,
-            color_uniform: Vec3::new(0.18823, 0.51372, 0.86274),
-        });
     }
 
     (models, aabb)

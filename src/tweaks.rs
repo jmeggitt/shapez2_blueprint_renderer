@@ -122,7 +122,7 @@ impl ModelLoader {
         }
 
         'search: loop {
-            if let Some(obj) = Self::try_load_object(format!("{}.obj", name)) {
+            if let Some(obj) = Self::try_load_object(self.model_dir.join(format!("{}.obj", name))) {
                 let reference_counted = Rc::new(obj);
                 self.resolved_objects.insert(name.to_owned(), reference_counted.clone());
                 return Some(reference_counted);
@@ -191,66 +191,87 @@ pub struct Mapping<'s> {
 }
 
 impl<'s> Mapping<'s> {
-    fn new(file: &'s str, offset: Vec3) -> Self {
+    const fn new(file: &'s str, offset: Vec3) -> Self {
         Mapping { file, offset }
     }
 
-    fn redirect(file: &'s str) -> Self {
+    const fn redirect(file: &'s str) -> Self {
         Mapping {
             file,
-            offset: Vec3::default(),
+            offset: Vec3::new(0.0, 0.0, 0.0),
         }
     }
 }
 
-fn internal_name_mapping_adjustments(internal_name: &str) -> Option<&[Mapping]> {
+macro_rules! const_mapping {
+    ($($token:tt)*) => {{
+        const X: &[Mapping] = &[$($token)*];
+        X
+    }};
+}
+
+fn internal_name_mapping_adjustments(internal_name: &str) -> Option<&'static [Mapping<'static>]> {
     Some(match internal_name {
         //belts
-        "BeltDefaultForwardInternalVariant" => &[Mapping::redirect("Belt_Straight")],
-        "BeltDefaultRightInternalVariant" => &[Mapping::redirect("Belt_90_R")],
-        "BeltDefaultLeftInternalVariant" => &[Mapping::redirect("Belt_90_L")],
+        "BeltDefaultForwardInternalVariant" => const_mapping![Mapping::redirect("Belt_Straight")],
+        "BeltDefaultRightInternalVariant" => const_mapping![Mapping::redirect("Belt_90_R")],
+        "BeltDefaultLeftInternalVariant" => const_mapping![Mapping::redirect("Belt_90_L")],
         //vertical
-        "Lift1UpBackwardInternalVariant" => &[Mapping::redirect("Lift1UpBackwards")],
+        "Lift1UpBackwardInternalVariant" => const_mapping![Mapping::redirect("Lift1UpBackwards")],
         //belts special
-        "SplitterTShapeInternalVariant" => &[Mapping::redirect("Splitter2to1T")],
-        "MergerTShapeInternalVariant" => &[Mapping::redirect("Merger2to1T")],
-        "BeltPortSenderInternalVariant" => &[Mapping::redirect("BeltPortSender")],
-        "BeltPortReceiverInternalVariant" => &[Mapping::redirect("BeltPortReceiver")],
+        "SplitterTShapeInternalVariant" => const_mapping![Mapping::redirect("Splitter2to1T")],
+        "MergerTShapeInternalVariant" => const_mapping![Mapping::redirect("Merger2to1T")],
+        "BeltPortSenderInternalVariant" => const_mapping![Mapping::redirect("BeltPortSender")],
+        "BeltPortReceiverInternalVariant" => const_mapping![Mapping::redirect("BeltPortReceiver")],
 
         //rotating
-        "RotatorOneQuadInternalVariant" => &[Mapping::redirect("Rotator1Quad"), Mapping::new("Rotator1QuadPlatform90CC", Vec3::new(0.0, 0.05, 0.0))], // arrows only
-        "RotatorOneQuadCCWInternalVariant" => &[Mapping::redirect("Rotator1Quad"), Mapping::new("Rotator1QuadPlatform90CW", Vec3::new(0.0, 0.05, 0.0))], // ^
-        "RotatorHalfInternalVariant" => &[Mapping::redirect("Rotator1Quad"), Mapping::new("Rotator1QuadPlatform180", Vec3::new(0.0, 0.05, 0.0))], // ^^
+        "RotatorOneQuadInternalVariant" => const_mapping![
+            Mapping::redirect("Rotator1Quad"),
+            Mapping::new("Rotator1QuadPlatform90CC", Vec3::new(0.0, 0.05, 0.0))
+        ],
+        "RotatorOneQuadCCWInternalVariant" => const_mapping![
+            Mapping::redirect("Rotator1Quad"),
+            Mapping::new("Rotator1QuadPlatform90CW", Vec3::new(0.0, 0.05, 0.0))
+        ],
+        "RotatorHalfInternalVariant" => const_mapping![
+            Mapping::redirect("Rotator1Quad"),
+            Mapping::new("Rotator1QuadPlatform180", Vec3::new(0.0, 0.05, 0.0))
+        ],
 
         //processing
-        "CutterDefaultInternalVariant" => &[Mapping::redirect("CutterStatic_Fixed")],
-        "StackerDefaultInternalVariant" => &[Mapping::redirect("StackerSolid")],
-        "PainterDefaultInternalVariant" => &[Mapping::redirect("PainterBasin")],
-        "MixerDefaultInternalVariant" => &[Mapping::redirect("MixerFoundation")],
-        "CutterHalfInternalVariant" => &[Mapping::redirect("HalfCutter")],
-        "PinPusherDefaultInternalVariant" => &[Mapping::redirect("PinPusher"), Mapping::redirect("PinPusherRotator1"), Mapping::new("PinPusherClampR", Vec3::new(0.0, 0.16, 0.0)), Mapping::new("PinPusherClampL", Vec3::new(0.0, 0.15, 0.0))],
+        "CutterDefaultInternalVariant" => const_mapping![Mapping::redirect("CutterStatic_Fixed")],
+        "StackerDefaultInternalVariant" => const_mapping![Mapping::redirect("StackerSolid")],
+        "PainterDefaultInternalVariant" => const_mapping![Mapping::redirect("PainterBasin")],
+        "MixerDefaultInternalVariant" => const_mapping![Mapping::redirect("MixerFoundation")],
+        "CutterHalfInternalVariant" => const_mapping![Mapping::redirect("HalfCutter")],
+        "PinPusherDefaultInternalVariant" => const_mapping![
+            Mapping::redirect("PinPusher"),
+            Mapping::redirect("PinPusherRotator1"),
+            Mapping::new("PinPusherClampR", Vec3::new(0.0, 0.16, 0.0)),
+            Mapping::new("PinPusherClampL", Vec3::new(0.0, 0.15, 0.0))
+        ],
 
         //pipes normal
-        "PipeLeftInternalVariant" => &[Mapping::redirect("PipeLeftGlas")],
-        "PipeRightInternalVariant" => &[Mapping::redirect("PipeRightGlas")],
-        "PipeCrossInternalVariant" => &[Mapping::redirect("PipeCrossJunctionGlas")],
-        "PipeJunctionInternalVariant" => &[Mapping::redirect("PipeJunctionGlas")],
+        "PipeLeftInternalVariant" => const_mapping![Mapping::redirect("PipeLeftGlas")],
+        "PipeRightInternalVariant" => const_mapping![Mapping::redirect("PipeRightGlas")],
+        "PipeCrossInternalVariant" => const_mapping![Mapping::redirect("PipeCrossJunctionGlas")],
+        "PipeJunctionInternalVariant" => const_mapping![Mapping::redirect("PipeJunctionGlas")],
         //pipes up
-        "PipeUpForwardInternalVariant" => &[Mapping::redirect("Pipe1UpForwardGlas")],
-        "PipeUpBackwardInternalVariant" => &[Mapping::redirect("Pipe1UpBackwardGlas")],
-        "PipeUpLeftInternalVariant" => &[Mapping::redirect("Pipe1UpLeftBlueprint")], // Contains the pump
-        "PipeUpRightInternalVariant" => &[Mapping::redirect("Pipe1UpRightBlueprint")], // ^
+        "PipeUpForwardInternalVariant" => const_mapping![Mapping::redirect("Pipe1UpForwardGlas")],
+        "PipeUpBackwardInternalVariant" => const_mapping![Mapping::redirect("Pipe1UpBackwardGlas")],
+        "PipeUpLeftInternalVariant" => const_mapping![Mapping::redirect("Pipe1UpLeftBlueprint")],
+        "PipeUpRightInternalVariant" => const_mapping![Mapping::redirect("Pipe1UpRightBlueprint")],
         //pipes down
-        "PipeDownForwardInternalVariant" => &[Mapping::redirect("Pipe1DownGlas")],
-        "PipeDownBackwardInternalVariant" => &[Mapping::redirect("Pipe1DownBackwardGlas")],
-        "PipeDownRightInternalVariant" => &[Mapping::redirect("Pipe1DownRightGlas")],
-        "PipeDownLeftInternalVariant" => &[Mapping::redirect("Pipe1DownLeftGlas")],
+        "PipeDownForwardInternalVariant" => const_mapping![Mapping::redirect("Pipe1DownGlas")],
+        "PipeDownBackwardInternalVariant" => const_mapping![Mapping::redirect("Pipe1DownBackwardGlas")],
+        "PipeDownRightInternalVariant" => const_mapping![Mapping::redirect("Pipe1DownRightGlas")],
+        "PipeDownLeftInternalVariant" => const_mapping![Mapping::redirect("Pipe1DownLeftGlas")],
 
         // Support Buildings
-        "LabelDefaultInternalVariant" => &[Mapping::redirect("LabelSupport")],
-        "FluidStorageDefaultInternalVariant" => &[Mapping::redirect("PaintTankFoundation")],
-        "StorageDefaultInternalVariant" => &[Mapping::redirect("StorageSolid")],
-        "SandboxFluidProducerDefaultInternalVariant" => &[Mapping::redirect("SandboxIFluidProducer")],
+        "LabelDefaultInternalVariant" => const_mapping![Mapping::redirect("LabelSupport")],
+        "FluidStorageDefaultInternalVariant" => const_mapping![Mapping::redirect("PaintTankFoundation")],
+        "StorageDefaultInternalVariant" => const_mapping![Mapping::redirect("StorageSolid")],
+        "SandboxFluidProducerDefaultInternalVariant" => const_mapping![Mapping::redirect("SandboxIFluidProducer")],
         _ => return None,
     })
 }
