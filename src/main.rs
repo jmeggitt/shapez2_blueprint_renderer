@@ -1,15 +1,15 @@
+use crate::blueprint::Blueprint;
 use crate::tweaks::ModelLoader;
-use base64::prelude::BASE64_STANDARD;
-use base64::read::DecoderReader;
 use clap::Parser;
-use flate2::read::GzDecoder;
-use serde::{Deserialize, Serialize};
-use std::fs::File;
-use std::io::ErrorKind::InvalidData;
-use std::io::{self, stdin, BufReader, Error, Read};
-use std::path::{Path, PathBuf};
+use clap_verbosity_flag::{InfoLevel, LogLevel, Verbosity};
+use lazy_static::lazy_static;
+use log::{error, info, set_logger, set_max_level, LevelFilter, Log, Metadata, Record};
+use std::io::{stderr, Write};
+use std::path::PathBuf;
 use std::process::exit;
+use std::time::Instant;
 
+mod blueprint;
 mod render;
 mod tweaks;
 
@@ -21,111 +21,100 @@ struct Args {
     model_dir: PathBuf,
     #[arg(short, long)]
     tweaks: Option<PathBuf>,
+    #[arg(short, long)]
+    out_file: Option<PathBuf>,
+    #[clap(flatten)]
+    verbose: Verbosity<InfoLevel>,
+    #[arg(long, default_value = "1980")]
+    width: u32,
+    #[arg(long, default_value = "1080")]
+    height: u32,
+    #[arg(short, long, default_value = "4")]
+    force_multisample: u32,
+}
+
+lazy_static! {
+    static ref ARGS: Args = Args::parse();
 }
 
 fn main() {
-    let args = Args::parse();
-    println!("{:?}", &args);
+    let program_start_time = Instant::now();
+    let logger = Box::new(ApplicationLogger {
+        verbosity: ARGS.verbose.clone(),
+        start_time: program_start_time,
+    });
 
-    if !args.model_dir.is_dir() {
-        println!(
-            "Error: expected model path {} to be a directory.",
-            args.model_dir.display()
+    set_logger(Box::leak(logger)).expect("no other logger has been registered");
+    set_max_level(LevelFilter::Trace);
+
+    if !ARGS.model_dir.is_dir() {
+        error!(
+            "expected model path {} to be a directory.",
+            ARGS.model_dir.display()
         );
-        println!("You can use '--model-dir <path>' to specify a different path");
+        error!("You can use '--model-dir <path>' to specify a different path");
         exit(1);
     }
 
-    let blueprint = match &args.input_file {
-        Some(file) => read_from_file(file),
-        None => read_from_stdin(),
+    let parse_start_time = Instant::now();
+    let blueprint = match &ARGS.input_file {
+        Some(file) => Blueprint::read_from_file(file),
+        None => Blueprint::read_from_stdin(),
     };
+    info!("Blueprint parse duration: {:?}", parse_start_time.elapsed());
 
-    let mut loader = ModelLoader::from_config_or_default(args.tweaks.as_ref(), args.model_dir);
+    let mut loader = ModelLoader::from_config_or_default(ARGS.tweaks.as_ref(), &ARGS.model_dir);
 
-    if let Err(err) = render::perform_render(&blueprint.bp.entries, &mut loader) {
-        println!("Encountered rendering error: {}", err);
+    // Preloading the models just makes it so that the model load time is not added to the outputted total render time
+    let model_preload_start_time = Instant::now();
+    for entry in &*blueprint {
+        loader.load_model(entry.internal_name());
+    }
+    info!(
+        "Preloaded model .obj files used by blueprint in {:?}",
+        model_preload_start_time.elapsed()
+    );
+
+    if let Err(err) = render::perform_render(&blueprint, &mut loader) {
+        error!("Encountered rendering error: {}", err);
         exit(1);
     }
 
     let (resolved, total) = loader.load_counts();
-    println!("Resolved a total of {}/{} models", resolved, total);
+
+    info!("Resolved a total of {}/{} models", resolved, total);
+    info!("Total duration: {:?}", program_start_time.elapsed());
 }
 
-fn read_from_file<P: AsRef<Path>>(path: P) -> BlueprintData {
-    let mut file = match File::open(path) {
-        Ok(v) => BufReader::new(v),
-        Err(e) => {
-            println!("Error: unable to open file: {}", e);
-            exit(1);
-        }
-    };
+pub struct ApplicationLogger<T: LogLevel> {
+    verbosity: Verbosity<T>,
+    start_time: Instant,
+}
 
-    match decode_blueprint(&mut file) {
-        Ok(v) => v,
-        Err(e) => {
-            println!("Failed to parse blueprint: {}", e);
-            exit(1);
+impl<T: LogLevel + Sync + Send> Log for ApplicationLogger<T> {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= self.verbosity.log_level_filter()
+    }
+
+    fn log(&self, record: &Record) {
+        match record.module_path() {
+            Some(module) => eprintln!(
+                "[{}, {:?}][{}]: {}",
+                record.level(),
+                self.start_time.elapsed(),
+                module,
+                record.args()
+            ),
+            None => eprintln!(
+                "[{}, {:?}]: {}",
+                record.level(),
+                self.start_time.elapsed(),
+                record.args()
+            ),
         }
     }
-}
 
-fn read_from_stdin() -> BlueprintData {
-    let mut stdin = stdin();
-
-    match decode_blueprint(&mut stdin) {
-        Ok(v) => v,
-        Err(e) => {
-            println!("Failed to parse blueprint: {}", e);
-            exit(1);
-        }
+    fn flush(&self) {
+        let _ = stderr().flush();
     }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-struct BlueprintData {
-    v: i32,
-    bp: BlueprintEntries,
-}
-
-#[derive(Serialize, Deserialize)]
-struct BlueprintEntries {
-    #[serde(rename = "Entries")]
-    entries: Vec<BlueprintEntry>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub struct BlueprintEntry {
-    x: i32,
-    y: i32,
-    l: i32,
-    r: i32,
-    #[serde(rename = "T")]
-    internal_name: String,
-    c: String,
-}
-
-fn decode_blueprint<R: Read>(reader: &mut R) -> io::Result<BlueprintData> {
-    let mut data = Vec::new();
-    io::copy(reader, &mut data)?;
-
-    let utf8 =
-        String::from_utf8(data).map_err(|_| Error::new(InvalidData, "Blueprint must be utf-8"))?;
-
-    let mut trimmed = utf8.as_str();
-    trimmed = trimmed
-        .strip_prefix("SHAPEZ2-1-")
-        .ok_or_else(|| Error::new(InvalidData, "Expected blueprint to start with 'SHAPEZ2-1-'"))?;
-    trimmed = trimmed
-        .strip_suffix('$')
-        .ok_or_else(|| Error::new(InvalidData, "Expected blueprint to end with '$'"))?;
-
-    let mut reader = trimmed.as_bytes();
-    let decoder = DecoderReader::new(&mut reader, &BASE64_STANDARD);
-    let deflate = GzDecoder::new(decoder);
-
-    serde_json::from_reader(deflate)
-        .map_err(|_| Error::new(InvalidData, "Unable to decode blueprint data"))
 }

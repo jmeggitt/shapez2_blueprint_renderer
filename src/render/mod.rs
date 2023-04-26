@@ -2,50 +2,89 @@ pub mod context;
 mod general;
 pub mod gl;
 mod shader;
+mod util;
 mod vertex;
 
+use crate::blueprint::BlueprintEntry;
 use crate::render::general::GeneralProgram;
-use crate::render::gl::types::{GLsizei, GLsizeiptr, GLuint};
+use crate::render::gl::types::{GLsizei, GLuint};
+use crate::render::util::{check_for_errors, load_vbo};
 use crate::render::vertex::{vertex_buffer_for_model, Vertex};
 use crate::tweaks::{Model, ModelLoader};
-use crate::BlueprintEntry;
+use crate::ARGS;
 pub use context::setup_opengl;
 pub use gl::Gl;
 use image::imageops::{flip_vertical_in_place, resize, FilterType};
-use image::RgbImage;
-use nalgebra_glm::{look_at, perspective, rotate_y, rotation, scale, translation, Mat4, Vec3, Vec4, translate};
+use image::{ImageFormat, RgbImage};
+use log::info;
+use nalgebra_glm::{
+    look_at, perspective, rotate_y, rotation, scale, translate, translation, Mat4, Vec3, Vec4,
+};
 use num_traits::FloatConst;
-use std::collections::HashMap;
-use std::mem::size_of;
-use std::rc::Rc;
 use obj::Obj;
-
-const FORCED_SAMPLE_MULTIPLIER: u32 = 4;
+use std::collections::HashMap;
+use std::io::{stdout, Cursor, Write};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 pub fn perform_render(
     entries: &[BlueprintEntry],
     model_loader: &mut ModelLoader,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let width = 1980;
-    let height = 1080;
+    let forced_multisample = ARGS.force_multisample.max(1);
 
-    let img = unsafe {
+    if forced_multisample != 1 {
+        info!(
+            "Manually increasing render samples by factor of {}",
+            forced_multisample
+        );
+    }
+
+    let mut img = unsafe {
         perform_render_impl(
             entries,
             model_loader,
-            width * FORCED_SAMPLE_MULTIPLIER,
-            height * FORCED_SAMPLE_MULTIPLIER,
+            ARGS.width * forced_multisample,
+            ARGS.height * forced_multisample,
         )
     };
 
-    println!(
-        "Shrinking image by a factor of {}",
-        FORCED_SAMPLE_MULTIPLIER
-    );
-    let out = resize(&img, width, height, FilterType::Triangle);
+    if forced_multisample != 1 {
+        // TODO: Add CLI argument for resample type
+        let resample_filter = FilterType::Triangle;
+        info!(
+            "Resampling image from render size ({}, {}) to desired size ({}, {}) using {:?} filter",
+            img.width(),
+            img.height(),
+            ARGS.width,
+            ARGS.height,
+            resample_filter
+        );
 
-    println!("Saving image to disk");
-    out.save("out_glutin.png").unwrap();
+        let resize_start_time = Instant::now();
+        img = resize(&img, ARGS.width, ARGS.height, resample_filter);
+        info!(
+            "Finished image resampling in {:?}",
+            resize_start_time.elapsed()
+        );
+    }
+
+    match ARGS.out_file.as_ref() {
+        Some(path) => {
+            info!("Saving result as {}", path.display());
+            img.save_with_format(path, ImageFormat::Png)?;
+        }
+        None => {
+            info!("Writing result to stdout");
+            let mut buffer = Vec::with_capacity((img.width() * img.height() * 3) as usize);
+            img.write_to(&mut Cursor::new(&mut buffer), ImageFormat::Png)?;
+
+            let mut stdout = stdout().lock();
+            stdout.write_all(&buffer)?;
+            stdout.flush()?;
+        }
+    }
+
     Ok(())
 }
 
@@ -55,68 +94,27 @@ unsafe fn perform_render_impl(
     width: u32,
     height: u32,
 ) -> RgbImage {
-    println!("Creating graphics context");
     let (_, graphics) = setup_opengl(width, height);
+    let render_start_time = Instant::now();
 
     // Check that we actually have a buffer setup correctly
     if graphics.CheckFramebufferStatus(gl::FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE {
         panic!("Failed to setup framebuffer!");
     }
 
-    // let mut fbo = 0;
-    // let mut rbo = 0;
-    // let mut texture = 0;
-    // graphics.GenFramebuffers(1, &mut fbo as *mut _);
-    // graphics.BindFramebuffer(gl::FRAMEBUFFER, fbo);
-    // let mut framebuffer = 0;
-    // let mut renderbuffer = 0;
-    // graphics.GenFramebuffers(1, &mut fbo);
-    // graphics.GenRenderbuffers(1, &mut rbo);
-    println!("Created FBO and RBO");
-    //
-    // if graphics.CheckFramebufferStatus(fbo) != gl::FRAMEBUFFER_COMPLETE {
-    //     panic!("Failed to setup framebuffer!");
-    // }
-    //
-    // graphics.BindFramebuffer(gl::FRAMEBUFFER, fbo);
-    // graphics.BindRenderbuffer(gl::RENDERBUFFER, rbo);
-    // graphics.RenderbufferStorage(gl::RENDERBUFFER, gl::RGBA, width as GLsizei, height as GLsizei);
-    // graphics.FramebufferRenderbuffer(
-    //     gl::FRAMEBUFFER,
-    //     gl::COLOR_ATTACHMENT0,
-    //     gl::RENDERBUFFER,
-    //     rbo,
-    // );
-    // check_for_errors(&graphics);
-
-    // graphics.GenTextures(1, &mut texture);
-    // graphics.BindTexture(gl::TEXTURE_2D, texture);
-    //
-    // graphics.TexImage2D(gl::TEXTURE_2D, 0, gl::RGB as GLint, width as GLsizei, height as GLsizei, 0, gl::RGB, gl::UNSIGNED_BYTE, 0 as *const c_void);
-    //
-    // graphics.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as GLint);
-    // graphics.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as GLint);
-    //
-    // graphics.FramebufferTexture(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, texture, 0);
-    //
-    // let mut draw_buffers = gl::COLOR_ATTACHMENT0;
-    // graphics.DrawBuffers(1, &mut draw_buffers);
-
-    // graphics.BindFramebuffer(gl::FRAMEBUFFER, fbo);
-    graphics
-        .gl
-        .Viewport(0, 0, width as GLsizei, height as GLsizei);
+    info!("Beginning render of size ({}, {})", width, height);
+    graphics.Viewport(0, 0, width as GLsizei, height as GLsizei);
     check_for_errors(&graphics);
 
-    println!("Assigned size to FBO");
-
+    let shader_compile_start_time = Instant::now();
     let program = unsafe { GeneralProgram::build(&graphics).unwrap() };
-    println!("Built shader program");
+    info!(
+        "Loaded and compiled shaders in {:?}",
+        shader_compile_start_time.elapsed()
+    );
 
     graphics.ClearColor(0.1, 0.1, 0.1, 1.0);
-    graphics
-        .gl
-        .Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+    graphics.Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
 
     graphics.Enable(gl::DEPTH_TEST);
     graphics.DepthFunc(gl::LESS);
@@ -208,10 +206,15 @@ unsafe fn perform_render_impl(
 
     let mut buffer = vec![0u8; (width * height * 3) as usize];
 
-    println!("Wait for rendering to finish");
+    info!("Waiting for completion of all items in graphics render queue");
     graphics.Finish();
+    info!(
+        "Render completed. Total elapsed time to perform render: {:?}",
+        render_start_time.elapsed()
+    );
 
-    println!("Waiting for GPU sync point so we can move finished image to main memory :/");
+    info!("Performing call to glReadPixels to fetch image from graphics memory");
+    let read_pixels_start_time = Instant::now();
     graphics.ReadPixels(
         0,
         0,
@@ -221,8 +224,11 @@ unsafe fn perform_render_impl(
         gl::UNSIGNED_BYTE,
         buffer.as_mut_ptr() as *mut _,
     );
+    info!(
+        "Completed call glReadPixels in {:?}",
+        read_pixels_start_time.elapsed()
+    );
 
-    print!("Flipping, resizing, and saving image");
     check_for_errors(&graphics);
     match RgbImage::from_raw(width, height, buffer) {
         Some(mut img) => {
@@ -361,15 +367,21 @@ unsafe fn send_models_to_gpu(
 
     let mut model_vertex_buffer = Vec::new();
 
+    let mut vertex_build_time = Duration::default();
+    let mut aabb_build_time = Duration::default();
+    let mut gpu_upload_time = Duration::default();
+
     for entry in entries {
-        for Model{model, offset} in model_loader.load_model(&entry.internal_name) {
-            let pos = translation(&Vec3::new(entry.x as f32, entry.l as f32, entry.y as f32));
+        for Model { model, offset } in model_loader.load_model(entry.internal_name()) {
+            let pos = translation(&entry.position());
             let pos = scale(&pos, &Vec3::new(1.0, 1.0, -1.0));
-            let pos = rotate_y(&pos, entry.r as f32 * f32::PI() / 2.0);
+            let pos = rotate_y(&pos, entry.rotation());
             let pos = translate(&pos, offset);
 
             if let Some(&(vbo, vertex_count, model_aabb)) = built_models.get(&Rc::as_ptr(model)) {
+                let aabb_build_start_time = Instant::now();
                 aabb.expand_to_hold_aabb(model_aabb.apply_transform(&pos));
+                aabb_build_time += aabb_build_start_time.elapsed();
 
                 models.push(ModelGraphics {
                     vbo,
@@ -381,6 +393,7 @@ unsafe fn send_models_to_gpu(
                 continue;
             }
 
+            let aabb_build_start_time = Instant::now();
             let mut model_aabb = Aabb::default();
             model
                 .data
@@ -390,16 +403,19 @@ unsafe fn send_models_to_gpu(
                 .for_each(|vertex| model_aabb.expand_to_hold(vertex));
 
             aabb.expand_to_hold_aabb(model_aabb.apply_transform(&pos));
+            aabb_build_time += aabb_build_start_time.elapsed();
 
+            let vertex_build_start_time = Instant::now();
             model_vertex_buffer.clear();
             vertex_buffer_for_model(&mut model_vertex_buffer, model);
+            vertex_build_time += vertex_build_start_time.elapsed();
 
+            let vbo_creation_start_time = Instant::now();
             let vbo = load_vbo(gl, &model_vertex_buffer);
+            gpu_upload_time += vbo_creation_start_time.elapsed();
+
             let vertex_count = model_vertex_buffer.len() as GLsizei;
-            built_models.insert(
-                Rc::as_ptr(model),
-                (vbo, vertex_count, model_aabb),
-            );
+            built_models.insert(Rc::as_ptr(model), (vbo, vertex_count, model_aabb));
 
             models.push(ModelGraphics {
                 vbo,
@@ -410,47 +426,10 @@ unsafe fn send_models_to_gpu(
         }
     }
 
+    info!("Sent model data to graphics memory:");
+    info!("Vertex list build time: {:?}", vertex_build_time);
+    info!("AABB build time: {:?}", aabb_build_time);
+    info!("GL buffer upload time: {:?}", gpu_upload_time);
+
     (models, aabb)
-}
-
-pub unsafe fn load_vbo<T>(gl: &Gl, buffer: &[T]) -> GLuint {
-    let mut vbo = 0;
-    gl.GenBuffers(1, &mut vbo);
-    gl.BindBuffer(gl::ARRAY_BUFFER, vbo);
-
-    gl.BufferData(
-        gl::ARRAY_BUFFER,
-        (size_of::<T>() * buffer.len()) as GLsizeiptr,
-        buffer.as_ptr() as *const _,
-        gl::STATIC_DRAW,
-    );
-
-    vbo
-}
-
-#[track_caller]
-pub fn check_for_errors(gl: &Gl) {
-    let mut has_errored = false;
-    loop {
-        let err = unsafe { gl.GetError() };
-        has_errored |= err != gl::NO_ERROR;
-
-        match err {
-            gl::NO_ERROR => {
-                if has_errored {
-                    panic!("Exited due to previous error")
-                }
-                return;
-            }
-            gl::INVALID_ENUM => println!("Invalid enum"),
-            gl::INVALID_VALUE => println!("Invalid value"),
-            gl::INVALID_OPERATION => println!("Invalid operation"),
-            gl::STACK_OVERFLOW => println!("Stack overflow"),
-            gl::STACK_UNDERFLOW => println!("Stack underflow"),
-            gl::OUT_OF_MEMORY => println!("Out of memory"),
-            gl::INVALID_FRAMEBUFFER_OPERATION => println!("Invalid framebuffer operation"),
-            gl::CONTEXT_LOST => println!("Context lost"),
-            x => println!("Unknown error code: 0x{:X}", x),
-        }
-    }
 }
