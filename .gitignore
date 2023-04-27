@@ -5,7 +5,5 @@ Cargo.lock
 *.png
 
 # Models and test input files
-OBJ
-models
 blueprint
 bp.txt

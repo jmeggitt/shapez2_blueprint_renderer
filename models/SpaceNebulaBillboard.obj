@@ -1,0 +1,18 @@
+# Created using Spin 3D
+
+# Vertex Array 
+v -1.000 1.000 -1.000
+v 1.000 1.000 -1.000
+v 1.000 -1.000 -1.000
+v -1.000 -1.000 -1.000
+
+# Normal Array
+vn -0.000 0.000 1.000
+vn 0.000 0.000 1.000
+
+# Facets
+f 1//1 3//1 2//1
+f 4//2 3//2 1//2
+
+# Thank you for using Spin 3D
+
