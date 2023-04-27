@@ -241,7 +241,10 @@ fn internal_name_mapping_adjustments(internal_name: &str) -> Option<&'static [Ma
         //processing
         "CutterDefaultInternalVariant" => const_mapping![Mapping::redirect("CutterStatic_Fixed")],
         "StackerDefaultInternalVariant" => const_mapping![Mapping::redirect("StackerSolid")],
-        "PainterDefaultInternalVariant" => const_mapping![Mapping::redirect("PainterBasin")],
+        "PainterDefaultInternalVariant" => const_mapping![
+            Mapping::redirect("PainterBasin"),
+            Mapping::new("PainterRoll", Vec3::new(0.0, 0.3, 0.0))
+        ],
         "MixerDefaultInternalVariant" => const_mapping![Mapping::redirect("MixerFoundation")],
         "CutterHalfInternalVariant" => const_mapping![Mapping::redirect("HalfCutter")],
         "PinPusherDefaultInternalVariant" => const_mapping![
@@ -252,6 +255,7 @@ fn internal_name_mapping_adjustments(internal_name: &str) -> Option<&'static [Ma
         ],
 
         //pipes normal
+        "PipeForwardInternalVariant" => const_mapping![Mapping::redirect("PipeForwardGlas")],
         "PipeLeftInternalVariant" => const_mapping![Mapping::redirect("PipeLeftGlas")],
         "PipeRightInternalVariant" => const_mapping![Mapping::redirect("PipeRightGlas")],
         "PipeCrossInternalVariant" => const_mapping![Mapping::redirect("PipeCrossJunctionGlas")],
