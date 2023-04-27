@@ -1,52 +1,15 @@
+use log::{error, warn};
 use nalgebra_glm::Vec3;
 use obj::Obj;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufReader};
 use std::path::{Path, PathBuf};
-use std::process::exit;
 use std::rc::Rc;
 
-#[derive(Debug, Default, Deserialize, Serialize)]
-pub struct ModelTweaksConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rotate_all: Option<[f64; 3]>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    scale_all: Option<[f64; 3]>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    offset_all: Option<[f64; 3]>,
-    models: HashMap<String, ModelTweaks>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum ModelTweaks {
-    #[serde(rename = "ignore")]
-    Ignored,
-    General {
-        /// The path of this model
-        #[serde(skip_serializing_if = "Option::is_none")]
-        path: Option<PathBuf>,
-        /// Defer to another model's configuration
-        #[serde(skip_serializing_if = "Option::is_none")]
-        using: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        rotation: Option<[f64; 3]>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        scale: Option<[f64; 3]>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        offset: Option<[f64; 3]>,
-    },
-}
-
 pub struct ModelLoader {
-    _config: ModelTweaksConfig,
     resolved_objects: HashMap<String, Rc<Obj>>,
     model_sets: HashMap<String, Vec<Model>>,
     model_dir: PathBuf,
 }
-
 
 pub struct Model {
     pub model: Rc<Obj>,
@@ -54,40 +17,11 @@ pub struct Model {
 }
 
 impl ModelLoader {
-    pub fn from_config_or_default<P: AsRef<Path>>(
-        config_path: Option<P>,
-        model_dir: PathBuf,
-    ) -> Self {
-        if let Some(path) = config_path {
-            let file = match File::open(path) {
-                Ok(file) => BufReader::new(file),
-                Err(e) => {
-                    eprintln!("Error: unable to read model tweaks file: {}", e);
-                    exit(1);
-                }
-            };
-
-            match serde_json::from_reader(file) {
-                Ok(config) => {
-                    return ModelLoader {
-                        _config: config,
-                        resolved_objects: HashMap::new(),
-                        model_sets: HashMap::new(),
-                        model_dir,
-                    };
-                }
-                Err(e) => {
-                    eprintln!("Error: failed to read model tweaks file: {}", e);
-                    exit(1);
-                }
-            }
-        }
-
+    pub fn new<P: AsRef<Path>>(model_dir: P) -> Self {
         ModelLoader {
-            _config: ModelTweaksConfig::default(),
             resolved_objects: HashMap::new(),
             model_sets: HashMap::new(),
-            model_dir,
+            model_dir: model_dir.as_ref().to_path_buf(),
         }
     }
 
@@ -99,17 +33,13 @@ impl ModelLoader {
         let mut obj = match Obj::load(path.as_ref()) {
             Ok(obj) => obj,
             Err(e) => {
-                eprintln!(
-                    "Error: Failed to read model {}: {}",
-                    path.as_ref().display(),
-                    e
-                );
+                error!("Failed to read model {}: {}", path.as_ref().display(), e);
                 return None;
             }
         };
 
         if let Err(e) = obj.load_mtls() {
-            eprintln!("Error: failed to load model materials: {}", e);
+            error!("Error: failed to load model materials: {}", e);
             return None;
         }
 
@@ -124,7 +54,8 @@ impl ModelLoader {
         'search: loop {
             if let Some(obj) = Self::try_load_object(self.model_dir.join(format!("{}.obj", name))) {
                 let reference_counted = Rc::new(obj);
-                self.resolved_objects.insert(name.to_owned(), reference_counted.clone());
+                self.resolved_objects
+                    .insert(name.to_owned(), reference_counted.clone());
                 return Some(reference_counted);
             }
 
@@ -150,25 +81,25 @@ impl ModelLoader {
         }
 
         let model_set = match internal_name_mapping_adjustments(name) {
-            None => Vec::from_iter(
-                self.find_object(name)
-                    .map(|model| Model {
-                        model,
-                        offset: Vec3::default(),
-                    })),
-            Some(mappings) => Vec::from_iter(
-                mappings.iter()
-                    .filter_map(|&Mapping { file, offset }| {
-                        Some(Model {
-                            model: self.find_object(file)?,
-                            offset,
-                        })
-                    })),
+            None => Vec::from_iter(self.find_object(name).map(|model| Model {
+                model,
+                offset: Vec3::default(),
+            })),
+            Some(mappings) => {
+                Vec::from_iter(mappings.iter().filter_map(|&Mapping { file, offset }| {
+                    Some(Model {
+                        model: self.find_object(file)?,
+                        offset,
+                    })
+                }))
+            }
         };
 
-
         if model_set.is_empty() {
-            println!("Failed to find model for {}; building will not be rendered", name);
+            warn!(
+                "Failed to find model for {}; building will not be rendered",
+                name
+            );
         }
 
         self.model_sets.insert(name.to_owned(), model_set);
@@ -263,15 +194,21 @@ fn internal_name_mapping_adjustments(internal_name: &str) -> Option<&'static [Ma
         "PipeUpRightInternalVariant" => const_mapping![Mapping::redirect("Pipe1UpRightBlueprint")],
         //pipes down
         "PipeDownForwardInternalVariant" => const_mapping![Mapping::redirect("Pipe1DownGlas")],
-        "PipeDownBackwardInternalVariant" => const_mapping![Mapping::redirect("Pipe1DownBackwardGlas")],
+        "PipeDownBackwardInternalVariant" => {
+            const_mapping![Mapping::redirect("Pipe1DownBackwardGlas")]
+        }
         "PipeDownRightInternalVariant" => const_mapping![Mapping::redirect("Pipe1DownRightGlas")],
         "PipeDownLeftInternalVariant" => const_mapping![Mapping::redirect("Pipe1DownLeftGlas")],
 
         // Support Buildings
         "LabelDefaultInternalVariant" => const_mapping![Mapping::redirect("LabelSupport")],
-        "FluidStorageDefaultInternalVariant" => const_mapping![Mapping::redirect("PaintTankFoundation")],
+        "FluidStorageDefaultInternalVariant" => {
+            const_mapping![Mapping::redirect("PaintTankFoundation")]
+        }
         "StorageDefaultInternalVariant" => const_mapping![Mapping::redirect("StorageSolid")],
-        "SandboxFluidProducerDefaultInternalVariant" => const_mapping![Mapping::redirect("SandboxIFluidProducer")],
+        "SandboxFluidProducerDefaultInternalVariant" => {
+            const_mapping![Mapping::redirect("SandboxIFluidProducer")]
+        }
         _ => return None,
     })
 }

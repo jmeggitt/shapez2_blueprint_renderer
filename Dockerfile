@@ -35,4 +35,4 @@ COPY blueprint .
 COPY src src
 
 ENV RUST_BACKTRACE=1
-CMD xvfb-run -s "-ac -screen 0 1980x1080x24" cargo run -- -m ./OBJ blueprint
+CMD xvfb-run -s "-ac -screen 0 7920x4320x24" cargo run -- -m ./OBJ blueprint -vvvvvv -o out.png --ssaa 4
