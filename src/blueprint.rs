@@ -58,7 +58,7 @@ impl Blueprint {
         let utf8 = String::from_utf8(data)
             .map_err(|_| Error::new(InvalidData, "Blueprint must be utf-8"))?;
 
-        let mut trimmed = utf8.as_str();
+        let mut trimmed = utf8.as_str().trim();
         trimmed = trimmed.strip_prefix("SHAPEZ2-1-").ok_or_else(|| {
             Error::new(InvalidData, "Expected blueprint to start with 'SHAPEZ2-1-'")
         })?;

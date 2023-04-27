@@ -47,6 +47,8 @@ struct Args {
     /// system has.
     #[arg(long, default_value = "1")]
     ssaa: u32,
+    /// The sampler used when resizing a super sampled image to the intended size. This will effect
+    /// the final image quality when resizing is required.
     #[arg(long, value_enum, default_value = "linear")]
     ssaa_sampler: ImageFilter,
 }
