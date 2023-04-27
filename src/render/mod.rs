@@ -6,6 +6,7 @@ mod util;
 mod vertex;
 
 use crate::blueprint::BlueprintEntry;
+use crate::render::context::DisplayManager;
 use crate::render::general::GeneralProgram;
 use crate::render::gl::types::{GLsizei, GLuint};
 use crate::render::util::{check_for_errors, load_vbo};
@@ -14,9 +15,10 @@ use crate::tweaks::{Model, ModelLoader};
 use crate::ARGS;
 pub use context::setup_opengl;
 pub use gl::Gl;
-use image::imageops::{flip_vertical_in_place, resize, FilterType};
+use glutin::config::{ColorBufferType, GlConfig};
+use image::imageops::{flip_vertical_in_place, resize};
 use image::{ImageFormat, RgbImage};
-use log::info;
+use log::{info, warn};
 use nalgebra_glm::{
     look_at, perspective, rotate_y, rotation, scale, translate, translation, Mat4, Vec3, Vec4,
 };
@@ -31,27 +33,70 @@ pub fn perform_render(
     entries: &[BlueprintEntry],
     model_loader: &mut ModelLoader,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let forced_multisample = ARGS.force_multisample.max(1);
+    let mut ssaa = ARGS.ssaa.max(1);
 
-    if forced_multisample != 1 {
+    if ssaa > 16 {
+        warn!("SSAA values over 16 will not have a noticeable effect on the image quality");
+        ssaa = 16;
+    }
+
+    let (_, graphics) = setup_opengl(ARGS.width * ssaa, ARGS.height * ssaa);
+
+    let color_sample_size = match graphics.gl_config.color_buffer_type() {
+        Some(ColorBufferType::Rgb {
+            r_size,
+            g_size,
+            b_size,
+        }) => r_size.max(g_size).max(b_size),
+        Some(ColorBufferType::Luminance(size)) => size,
+        None => 8,
+    };
+
+    let color_buffer_resolution = 1u32 << color_sample_size;
+    let msaa_samples = graphics.gl_config.num_samples().max(1);
+    let max_useful_ssaa = (color_buffer_resolution as f64 / msaa_samples as f64)
+        .sqrt()
+        .ceil() as u32;
+
+    // We have already created a window with the larger size, but we can still choose not to use
+    // the entirety of the window for rendering with glViewport.
+    if ssaa > max_useful_ssaa {
+        warn!("The current SSAA setting combined with the system MSAA results in more samples being performed than the resolution of the color buffer. Reducing SSAA from {} to {}.", ssaa, max_useful_ssaa);
+        ssaa = max_useful_ssaa;
+    }
+
+    if ssaa != 1 {
         info!(
-            "Manually increasing render samples by factor of {}",
-            forced_multisample
+            "Using SSAA to increase render samples by factor of {}",
+            ssaa
+        );
+    }
+
+    let mut render_width = ARGS.width * ssaa;
+    let mut render_height = ARGS.height * ssaa;
+
+    let window_size = graphics.window.inner_size();
+    if render_width > window_size.width || render_height > window_size.height {
+        warn!(
+            "Window provided by system is not large enough to render with the output size and SSAA"
+        );
+
+        (render_width, render_height) = clamp_with_aspect_ratio(
+            render_width,
+            render_height,
+            window_size.width,
+            window_size.height,
         );
     }
 
     let mut img = unsafe {
-        perform_render_impl(
-            entries,
-            model_loader,
-            ARGS.width * forced_multisample,
-            ARGS.height * forced_multisample,
-        )
+        perform_render_impl(graphics, entries, model_loader, render_width, render_height)
     };
 
-    if forced_multisample != 1 {
+    if img.width() != ARGS.width || img.height() != ARGS.height {
         // TODO: Add CLI argument for resample type
-        let resample_filter = FilterType::Triangle;
+        let resample_filter = ARGS.ssaa_sampler.0;
+
         info!(
             "Resampling image from render size ({}, {}) to desired size ({}, {}) using {:?} filter",
             img.width(),
@@ -72,7 +117,7 @@ pub fn perform_render(
     match ARGS.out_file.as_ref() {
         Some(path) => {
             info!("Saving result as {}", path.display());
-            img.save_with_format(path, ImageFormat::Png)?;
+            img.save(path)?;
         }
         None => {
             info!("Writing result to stdout");
@@ -88,13 +133,33 @@ pub fn perform_render(
     Ok(())
 }
 
+fn clamp_with_aspect_ratio(
+    src_width: u32,
+    src_height: u32,
+    dst_width: u32,
+    dst_height: u32,
+) -> (u32, u32) {
+    if src_width <= dst_width && src_height <= dst_height {
+        return (src_width, src_height);
+    }
+
+    let width = src_width * dst_height;
+    let height = src_height * dst_width;
+
+    if width > height {
+        (dst_width, height / src_width)
+    } else {
+        (width / src_height, dst_height)
+    }
+}
+
 unsafe fn perform_render_impl(
+    graphics: DisplayManager,
     entries: &[BlueprintEntry],
     model_loader: &mut ModelLoader,
     width: u32,
     height: u32,
 ) -> RgbImage {
-    let (_, graphics) = setup_opengl(width, height);
     let render_start_time = Instant::now();
 
     // Check that we actually have a buffer setup correctly
@@ -206,7 +271,7 @@ unsafe fn perform_render_impl(
 
     let mut buffer = vec![0u8; (width * height * 3) as usize];
 
-    info!("Waiting for completion of all items in graphics render queue");
+    info!("Waiting for completion of graphics render queue");
     graphics.Finish();
     info!(
         "Render completed. Total elapsed time to perform render: {:?}",
@@ -214,6 +279,7 @@ unsafe fn perform_render_impl(
     );
 
     info!("Performing call to glReadPixels to fetch image from graphics memory");
+
     let read_pixels_start_time = Instant::now();
     graphics.ReadPixels(
         0,
@@ -371,6 +437,9 @@ unsafe fn send_models_to_gpu(
     let mut aabb_build_time = Duration::default();
     let mut gpu_upload_time = Duration::default();
 
+    // let blueprint_color = Vec3::new(0.18823, 0.51372, 0.86274);
+    let blueprint_color = Vec3::new(56.0, 171.0, 203.0) / 255.0;
+
     for entry in entries {
         for Model { model, offset } in model_loader.load_model(entry.internal_name()) {
             let pos = translation(&entry.position());
@@ -387,7 +456,7 @@ unsafe fn send_models_to_gpu(
                     vbo,
                     vertex_count,
                     model_uniform: pos,
-                    color_uniform: Vec3::new(0.18823, 0.51372, 0.86274),
+                    color_uniform: blueprint_color,
                 });
 
                 continue;
@@ -421,7 +490,7 @@ unsafe fn send_models_to_gpu(
                 vbo,
                 vertex_count,
                 model_uniform: pos,
-                color_uniform: Vec3::new(0.18823, 0.51372, 0.86274),
+                color_uniform: blueprint_color,
             });
         }
     }

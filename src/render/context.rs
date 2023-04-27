@@ -118,7 +118,7 @@ pub fn setup_opengl(width: u32, height: u32) -> (EventLoop<()>, DisplayManager) 
         }
     };
 
-    info!("Picked a GL config with MSAAx{}", gl_config.num_samples());
+    info!("Picked a GL config with {}xMSAA", gl_config.num_samples());
 
     let window = match window {
         Some(x) => x,

@@ -1,48 +1,11 @@
 use log::{error, warn};
 use nalgebra_glm::Vec3;
 use obj::Obj;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::process::exit;
 use std::rc::Rc;
 
-#[derive(Debug, Default, Deserialize, Serialize)]
-pub struct ModelTweaksConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rotate_all: Option<[f64; 3]>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    scale_all: Option<[f64; 3]>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    offset_all: Option<[f64; 3]>,
-    models: HashMap<String, ModelTweaks>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum ModelTweaks {
-    #[serde(rename = "ignore")]
-    Ignored,
-    General {
-        /// The path of this model
-        #[serde(skip_serializing_if = "Option::is_none")]
-        path: Option<PathBuf>,
-        /// Defer to another model's configuration
-        #[serde(skip_serializing_if = "Option::is_none")]
-        using: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        rotation: Option<[f64; 3]>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        scale: Option<[f64; 3]>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        offset: Option<[f64; 3]>,
-    },
-}
-
 pub struct ModelLoader {
-    _config: ModelTweaksConfig,
     resolved_objects: HashMap<String, Rc<Obj>>,
     model_sets: HashMap<String, Vec<Model>>,
     model_dir: PathBuf,
@@ -54,34 +17,8 @@ pub struct Model {
 }
 
 impl ModelLoader {
-    pub fn from_config_or_default<P: AsRef<Path>>(config_path: Option<P>, model_dir: P) -> Self {
-        if let Some(path) = config_path {
-            let file = match File::open(path) {
-                Ok(file) => BufReader::new(file),
-                Err(e) => {
-                    error!("unable to read model tweaks file: {}", e);
-                    exit(1);
-                }
-            };
-
-            match serde_json::from_reader(file) {
-                Ok(config) => {
-                    return ModelLoader {
-                        _config: config,
-                        resolved_objects: HashMap::new(),
-                        model_sets: HashMap::new(),
-                        model_dir: model_dir.as_ref().to_path_buf(),
-                    };
-                }
-                Err(e) => {
-                    error!("failed to read model tweaks file: {}", e);
-                    exit(1);
-                }
-            }
-        }
-
+    pub fn new<P: AsRef<Path>>(model_dir: P) -> Self {
         ModelLoader {
-            _config: ModelTweaksConfig::default(),
             resolved_objects: HashMap::new(),
             model_sets: HashMap::new(),
             model_dir: model_dir.as_ref().to_path_buf(),

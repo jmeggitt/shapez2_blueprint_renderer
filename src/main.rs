@@ -1,7 +1,9 @@
 use crate::blueprint::Blueprint;
 use crate::tweaks::ModelLoader;
-use clap::Parser;
+use clap::builder::PossibleValue;
+use clap::{Parser, ValueEnum};
 use clap_verbosity_flag::{InfoLevel, LogLevel, Verbosity};
+use image::imageops::FilterType;
 use lazy_static::lazy_static;
 use log::{error, info, set_logger, set_max_level, LevelFilter, Log, Metadata, Record};
 use std::io::{stderr, Write};
@@ -16,21 +18,73 @@ mod tweaks;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    input_file: Option<String>,
+    /// The file which to read the blueprint from. If an input file is not provided, the blueprint
+    /// will instead be read from stdin.
+    input_file: Option<PathBuf>,
+    /// The directory holding the .obj files representing the various buildings and features within
+    /// the game.
     #[arg(short, long, default_value = "./models")]
     model_dir: PathBuf,
-    #[arg(short, long)]
-    tweaks: Option<PathBuf>,
+    /// The path that the output image will be written to. The image type is detected from the path
+    /// extension. If an output file is not provided, the image will instead be written to stdout as
+    /// a PNG.
     #[arg(short, long)]
     out_file: Option<PathBuf>,
     #[clap(flatten)]
     verbose: Verbosity<InfoLevel>,
+    /// The width of the output image
     #[arg(long, default_value = "1980")]
     width: u32,
+    /// The height of the output image
     #[arg(long, default_value = "1080")]
     height: u32,
-    #[arg(short, long, default_value = "4")]
-    force_multisample: u32,
+    /// This argument triggers SSAA on the rendered image. This is provided to allow for
+    /// anti-aliasing on systems which do not normally support MSAA. Values over 16 will not
+    /// increase the output quality.
+    ///
+    /// Note: This is applied by increasing the render size and resampling the output. As such,
+    /// this is NOT hardware accelerated and is performed on top of any MSAA capabilities the
+    /// system has.
+    #[arg(long, default_value = "1")]
+    ssaa: u32,
+    #[arg(long, value_enum, default_value = "linear")]
+    ssaa_sampler: ImageFilter,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct ImageFilter(FilterType);
+
+impl ValueEnum for ImageFilter {
+    fn value_variants<'a>() -> &'a [Self] {
+        const VARIANTS: &[ImageFilter] = &[
+            ImageFilter(FilterType::Nearest),
+            ImageFilter(FilterType::Triangle),
+            ImageFilter(FilterType::CatmullRom),
+            ImageFilter(FilterType::Gaussian),
+            ImageFilter(FilterType::Lanczos3),
+        ];
+
+        VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        let ImageFilter(filter) = self;
+
+        Some(match filter {
+            FilterType::Nearest => {
+                PossibleValue::new("nearest").help("Nearest neighbor sampling (fastest)")
+            }
+            FilterType::Triangle => PossibleValue::new("linear")
+                .help("Triangle (linear) sampling (~13x slower than nearest sampling)"),
+            FilterType::CatmullRom => PossibleValue::new("cubic")
+                .help("Catmull Rom (cubic) sampling (~26x slower than nearest sampling)"),
+            FilterType::Gaussian => PossibleValue::new("gaussian")
+                .help("Gaussian sampling (~38x slower than nearest sampling)"),
+            FilterType::Lanczos3 => PossibleValue::new("lanczos3").help(
+                "Lanczos Window 3 sampling (best quality, ~38x slower than nearest sampling)",
+            ),
+        })
+    }
 }
 
 lazy_static! {
@@ -63,7 +117,7 @@ fn main() {
     };
     info!("Blueprint parse duration: {:?}", parse_start_time.elapsed());
 
-    let mut loader = ModelLoader::from_config_or_default(ARGS.tweaks.as_ref(), &ARGS.model_dir);
+    let mut loader = ModelLoader::new(&ARGS.model_dir);
 
     // Preloading the models just makes it so that the model load time is not added to the outputted total render time
     let model_preload_start_time = Instant::now();
