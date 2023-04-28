@@ -7,6 +7,7 @@
     "esModuleInterop": true
   },
   "ts-node": {
-    "esm": true
+    "esm": true,
+    "skipIgnore": true
   }
 }
