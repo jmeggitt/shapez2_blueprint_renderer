@@ -4,8 +4,9 @@
     "target": "ESNext",
     "moduleResolution": "nodenext",
     "allowImportingTsExtensions": true,
+    "esModuleInterop": true
   },
   "ts-node": {
-    "esm": true,
-  },
+    "esm": true
+  }
 }
