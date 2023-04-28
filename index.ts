@@ -99,7 +99,7 @@ function optionsToProgramArgs(options: RenderOptions): Array<string> {
     for (const [key, value] of Object.entries(options)) {
         if (value === undefined) continue;
 
-        if(!OPTION_TO_ARGS.hasOwnProperty(key)) {
+        if (!OPTION_TO_ARGS.hasOwnProperty(key)) {
             throw new Error(`Unknown option "${key}" for RenderOptions`);
         }
 

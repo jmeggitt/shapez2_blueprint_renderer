@@ -1,5 +1,5 @@
 import {spawn} from "node:child_process";
-import {EXECUTABLE_PATH, MODEL_DIR} from "./config.ts";
+import {EXECUTABLE_PATH} from "./config.ts";
 
 
 export function wrapExecutable([width, height]: [number, number], headless?: boolean): [string, Array<string>] {
@@ -43,49 +43,4 @@ export function waitOnChildStdout(stdin: string | Buffer, executable: string, ar
         childProcess.stdin.end();
     });
 }
-
-
-export function renderOnChildProcess(blueprint: Buffer, executable: string, args: Array<string>): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-        const childProcess = spawn(EXECUTABLE_PATH!, args, {
-            "stdio": ["pipe", "pipe", "inherit"],
-        });
-
-        let outputBuffer = Buffer.alloc(0);
-
-        // There may be an easier way to handle collecting stdout to a buffer
-        childProcess.stdout.on("data", chunk => {
-            outputBuffer = Buffer.concat([outputBuffer, chunk])
-        });
-
-        childProcess.on("close", exit_code => {
-            if (exit_code !== 0) {
-                return reject(new Error("Renderer exited with non-zero exit code", {
-                    cause: {
-                        exit_code,
-                        executable,
-                        args
-                    },
-                }));
-            }
-
-            resolve(outputBuffer);
-        });
-
-        childProcess.on("error", error => {
-            reject(new Error("Failed to start child process for renderer", {
-                cause: {
-                    error,
-                    executable,
-                    args
-                }
-            }));
-        });
-
-        childProcess.stdin.write(blueprint);
-        childProcess.stdin.end();
-    });
-}
-
-
 

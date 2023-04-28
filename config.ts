@@ -1,17 +1,14 @@
 import * as path from "path";
 
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+import {fileURLToPath} from 'url';
+import {dirname} from 'path';
 
-import { accessSync, constants } from "node:fs";
+import {accessSync, constants} from "node:fs";
 
-// Run configuration
 const ROOT_DIR = dirname(fileURLToPath(import.meta.url));
 export const MODEL_DIR = path.join(ROOT_DIR, "models");
-
-
-// Executable location
 export const RENDER_PROJECT_NAME: string = "shapez2_blueprint_renderer";
+
 export const EXECUTABLE_PATH: string | null = findExecutable([
     // We may want to save space by deleting the build files after compiling the renderer. For this reason, check the
     // project directories first
@@ -37,7 +34,8 @@ function findExecutable(searchLocations: Array<string>): string | null {
         try {
             accessSync(executablePath, constants.X_OK);
             return executablePath;
-        } catch (ignored) {}
+        } catch (ignored) {
+        }
     }
 
     throw new Error("Unable to find render executable. Did the project build correctly?")
