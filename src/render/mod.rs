@@ -345,7 +345,7 @@ impl ModelGraphics {
                 [a, b, c, b, c, d]
             }
             None => {
-                println!("Unable to invert camera matrix");
+                warn!("Unable to invert camera matrix");
                 let size = 1000.0;
                 let ground_normal = Vec3::new(0.0, 1.0, 0.0);
 

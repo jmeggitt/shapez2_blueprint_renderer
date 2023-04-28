@@ -8,3 +8,6 @@ Cargo.lock
 # Models and test input files
 blueprint
 bp.txt
+
+package-lock.json
+node_modules/

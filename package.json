@@ -1,0 +1,16 @@
+{
+  "name": "shapez2_blueprint_renderer",
+  "version": "1.0.0",
+  "description": "A 3D renderer for Shapez2 blueprints",
+  "author": "Jasper Meggitt <jasper.meggitt@gmail.com>",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "cargo build --release"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.4"
+  }
+}

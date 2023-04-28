@@ -5,7 +5,7 @@ use clap::{Parser, ValueEnum};
 use clap_verbosity_flag::{InfoLevel, LogLevel, Verbosity};
 use image::imageops::FilterType;
 use lazy_static::lazy_static;
-use log::{error, info, set_logger, set_max_level, LevelFilter, Log, Metadata, Record};
+use log::{error, info, set_logger, set_max_level, Log, Metadata, Record};
 use std::io::{stderr, Write};
 use std::path::PathBuf;
 use std::process::exit;
@@ -101,7 +101,7 @@ fn main() {
     });
 
     set_logger(Box::leak(logger)).expect("no other logger has been registered");
-    set_max_level(LevelFilter::Trace);
+    set_max_level(ARGS.verbose.log_level_filter());
 
     if !ARGS.model_dir.is_dir() {
         error!(

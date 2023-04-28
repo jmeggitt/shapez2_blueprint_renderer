@@ -45,7 +45,7 @@ impl Blueprint {
         match Self::decode(&mut stdin) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("Failed to parse blueprint: {}", e);
+                error!("Failed to parse blueprint: {}", e);
                 exit(1);
             }
         }

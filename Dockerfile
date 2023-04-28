@@ -18,9 +18,8 @@ COPY OBJ/* OBJ/
 
 
 # Install graphics
-RUN apt-get install -y libxi-dev libglu1-mesa-dev libglew-dev xvfb xorg openbox
+RUN apt-get install -y libxi-dev libglu1-mesa-dev libglew-dev xvfb xorg openbox libfontconfig1-dev
 
-RUN apt-get install -y libfontconfig1-dev
 
 # Build dependencies before we copy the source files
 COPY Cargo.toml .
